@@ -13,6 +13,7 @@ import { format, formatDistanceToNow } from 'date-fns'
 export default function JobsDashboardPage() {
   const [uploadJobs, setUploadJobs] = useState([])
   const [exportJobs, setExportJobs] = useState([])
+  const [msaStorageJobs, setMsaStorageJobs] = useState([])
   const [recentAudit, setRecentAudit] = useState([])
   const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -25,17 +26,30 @@ export default function JobsDashboardPage() {
 
   const loadAll = async () => {
     try {
-      const [uploadsRes, exportsRes, auditRes, statsRes] = await Promise.all([
-        uploadAPI.jobs().catch(() => ({ data: { data: [] } })),
-        api.get('/tables/export/jobs').catch(() => ({ data: { data: [] } })),
-        auditAPI.list({ page_size: 20 }).catch(() => ({ data: { data: { logs: [] } } })),
-        api.get('/dashboard/stats').catch(() => ({ data: { data: null } })),
+      console.log('🔄 Loading all dashboard data...')
+      const [uploadsRes, exportsRes, msaRes, auditRes, statsRes] = await Promise.all([
+        uploadAPI.listAllJobs().catch(err => { console.error('Upload jobs error:', err); return { data: { data: [] } } }),
+        api.get('/tables/export/jobs').catch(err => { console.error('Export jobs error:', err); return { data: { data: [] } } }),
+        api.get('/msa/jobs').catch(err => { console.error('MSA jobs error:', err); return { data: { data: { jobs: [] } } } }),
+        auditAPI.list({ page_size: 20 }).catch(err => { console.error('Audit error:', err); return { data: { data: { logs: [] } } } }),
+        api.get('/dashboard/stats').catch(err => { console.error('Stats error:', err); return { data: { data: null } } }),
       ])
+      
+      console.log('✅ API Responses received:')
+      console.log('  Uploads:', uploadsRes.data?.data)
+      console.log('  Exports:', exportsRes.data?.data)
+      console.log('  MSA Jobs:', msaRes.data?.data)
+      console.log('  MSA Job statuses:', msaRes.data?.data?.jobs?.map(j => ({ id: j.job_id, status: j.status })))
+      console.log('  Audit:', auditRes.data?.data?.logs?.length, 'logs')
+      console.log('  Stats:', statsRes.data?.data)
       
       setUploadJobs(uploadsRes.data?.data || [])
       setExportJobs(exportsRes.data?.data || [])
+      setMsaStorageJobs(msaRes.data?.data?.jobs || [])
       setRecentAudit(auditRes.data?.data?.logs || [])
       setStats(statsRes.data?.data)
+      
+      console.log('✅ State updated with', msaRes.data?.data?.jobs?.length || 0, 'MSA jobs')
     } catch (err) {
       console.error('Failed to load dashboard data:', err)
     } finally {
@@ -89,6 +103,10 @@ export default function JobsDashboardPage() {
     acc[j.status] = (acc[j.status] || 0) + 1
     return acc
   }, {})
+  const msaByStatus = msaStorageJobs.reduce((acc, j) => {
+    acc[j.status] = (acc[j.status] || 0) + 1
+    return acc
+  }, {})
 
   return (
     <div className="space-y-6">
@@ -104,7 +122,7 @@ export default function JobsDashboardPage() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <StatsCard
           icon={<Upload className="text-blue-500" />}
           title="Upload Jobs"
@@ -118,6 +136,13 @@ export default function JobsDashboardPage() {
           value={exportJobs.length}
           subtitle={`${exportsByStatus.running || 0} running, ${exportsByStatus.completed || 0} completed`}
           color="green"
+        />
+        <StatsCard
+          icon={<TrendingUp className="text-indigo-500" />}
+          title="MSA Storage Jobs"
+          value={msaStorageJobs.length}
+          subtitle={`${msaByStatus.running || 0} running, ${msaByStatus.completed || 0} completed`}
+          color="indigo"
         />
         <StatsCard
           icon={<FileText className="text-purple-500" />}
@@ -236,6 +261,105 @@ export default function JobsDashboardPage() {
               ))
             )}
           </div>
+        </div>
+      </div>
+
+      {/* MSA Storage Jobs */}
+      <div className="card">
+        <div className="card-header flex items-center justify-between">
+          <h2 className="font-semibold flex items-center gap-2">
+            <TrendingUp size={16} className="text-indigo-500" /> MSA Storage Jobs
+          </h2>
+          {msaStorageJobs.some(j => j.status === 'pending' || j.status === 'queued') && (
+            <button
+              onClick={() => {
+                if (window.confirm('Cancel all pending MSA jobs?')) {
+                  api.post('/msa/jobs/cancel/all')
+                    .then(() => {
+                      toast.success('Cancelled all pending jobs')
+                      loadAll()
+                    })
+                    .catch(err => {
+                      console.error('Cancel all error:', err)
+                      toast.error('Failed to cancel jobs')
+                    })
+                }
+              }}
+              className="px-3 py-1 bg-red-500 hover:bg-red-600 text-white text-xs rounded transition-colors"
+            >
+              Cancel All
+            </button>
+          )}
+        </div>
+        <div className="divide-y max-h-96 overflow-auto">
+          {msaStorageJobs.length === 0 ? (
+            <div className="p-8 text-center text-gray-400">No MSA storage jobs</div>
+          ) : (
+            msaStorageJobs.slice(0, 20).map(job => (
+              <div key={job.job_id} className="p-3 hover:bg-gray-50">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-sm">Seq #{job.sequence_id}</span>
+                      {getStatusBadge(job.status)}
+                      <span className="text-xs text-gray-400 font-mono">{job.job_id}</span>
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1">
+                      {formatNumber(job.total_rows)} total rows
+                      {job.inserted_msa > 0 && ` • MSA: ${formatNumber(job.inserted_msa)}`}
+                      {job.inserted_colors > 0 && ` • Colors: ${formatNumber(job.inserted_colors)}`}
+                      {job.inserted_variants > 0 && ` • Variants: ${formatNumber(job.inserted_variants)}`}
+                    </div>
+                    {job.status === 'running' && job.total_rows > 0 && (
+                      <div className="mt-2">
+                        <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+                          <span>{formatNumber(job.processed_rows)} / {formatNumber(job.total_rows)}</span>
+                          <span>{Math.round((job.processed_rows / job.total_rows) * 100)}%</span>
+                        </div>
+                        <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                          <div 
+                            className="h-full bg-indigo-500 transition-all duration-500"
+                            style={{ width: `${(job.processed_rows / job.total_rows) * 100}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                    {job.status === 'completed' && job.duration_ms && (
+                      <div className="text-xs text-gray-500 mt-1">
+                        Completed in {(job.duration_ms / 1000).toFixed(2)}s
+                      </div>
+                    )}
+                    {job.status === 'failed' && job.error_message && (
+                      <div className="text-xs text-red-600 mt-1 truncate">{job.error_message}</div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {(job.status === 'pending' || job.status === 'queued') && (
+                      <button
+                        onClick={() => {
+                          api.post(`/msa/jobs/${job.job_id}/cancel`)
+                            .then(() => {
+                              toast.success(`Job ${job.job_id.slice(-4)} cancelled`)
+                              loadAll()
+                            })
+                            .catch(err => {
+                              console.error('Cancel error:', err)
+                              toast.error('Failed to cancel job')
+                            })
+                        }}
+                        className="px-2 py-1 bg-red-500 hover:bg-red-600 text-white text-xs rounded transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    )}
+                    <span className="text-xs text-gray-400">
+                      {job.created_at ? formatDistanceToNow(new Date(job.created_at), { addSuffix: true }) : ''}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
         </div>
       </div>
 

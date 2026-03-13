@@ -39,6 +39,7 @@ class MSACalculateRequest(BaseModel):
         default_factory=dict,
         description="Filter columns and their selected values. Example: {'SLOC': ['DC01', 'DC02'], 'CLR': ['RED']}"
     )
+    auto_store_results: bool = Field(True, description="Whether to automatically store results to database")
 
     class Config:
         json_schema_extra = {

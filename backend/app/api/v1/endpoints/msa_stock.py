@@ -2,7 +2,7 @@
 MSA Stock Calculation API Endpoints
 RESTful API for MSA filtering, calculation, and analysis
 """
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Path
 from sqlalchemy.orm import Session
 from typing import Dict, Any
 import json
@@ -23,6 +23,8 @@ from app.schemas.msa import (
 )
 from app.schemas.common import APIResponse
 from app.services.msa_service import MSAService
+from app.services.msa_result_storage import MSAResultStorageService
+from app.services.msa_job_service import create_msa_storage_job, get_job_status, list_jobs
 from app.security.dependencies import get_current_user
 from app.models.rbac import User
 
@@ -123,15 +125,18 @@ def get_msa_columns(
 def get_distinct_values(
     column: str = Query(..., description="Column name"),
     date: str = Query(None, description="Optional date filter (YYYY-MM-DD)"),
+    filters: str = Query(None, description="Optional JSON-encoded cascading filters (e.g., {\"ST_CD\": [\"DH24\", \"DH25\"]})"),
     db: Session = Depends(get_data_db),
     current_user: User = Depends(get_current_user)
 ):
     """
     Get distinct values for filtering a specific column
+    Supports cascading filters for dependent columns
     
     Query Parameters:
         - column: Column name (required)
         - date: Optional date filter
+        - filters: Optional JSON-encoded cascading filters dict
     
     Returns:
         - values: List of distinct values for the column
@@ -141,12 +146,29 @@ def get_distinct_values(
         if not column:
             raise HTTPException(status_code=400, detail="Column name required")
         
-        logger.info(f"📍 Getting distinct values for column: {column}, date: {date}")
+        logger.info(f"📍 Getting distinct values for column: {column}")
+        if date:
+            logger.info(f"   📅 Date filter: {date}")
+        if filters:
+            logger.info(f"   🔗 Cascading filters raw param: {filters}")
+        
+        # Parse cascading filters if provided
+        additional_filters = None
+        if filters:
+            try:
+                additional_filters = json.loads(filters)
+                logger.info(f"✅ Parsed cascading filters: {additional_filters}")
+            except json.JSONDecodeError as e:
+                logger.warning(f"⚠️ Could not parse filters JSON: {str(e)}")
+                logger.warning(f"   Raw value: {filters}")
+                additional_filters = None
         
         service = MSAService(db)
-        values = service.get_distinct_values(column, date)
+        values = service.get_distinct_values(column, date, additional_filters)
         
-        logger.info(f"✅ Endpoint returning {len(values)} distinct values for {column}: {values[:5]}")
+        logger.info(f"✅ Query returned {len(values)} distinct values for {column}")
+        if values:
+            logger.debug(f"   Sample values: {values[:5]}")
         
         return APIResponse(
             data={
@@ -160,6 +182,7 @@ def get_distinct_values(
         raise
     except Exception as e:
         logger.error(f"❌ Error getting distinct values for {column}: {str(e)}", exc_info=True)
+        logger.error(f"   Column: {column}, Date: {date}, Filters: {filters}")
         # Return empty list instead of throwing error
         return APIResponse(
             data={
@@ -510,35 +533,41 @@ def apply_filters(
 @router.post(
     "/calculate",
     response_model=APIResponse,
-    summary="Calculate MSA allocation"
+    summary="Calculate MSA allocation and store results"
 )
 def calculate_msa(
     body: MSACalculateRequest,
     db: Session = Depends(get_data_db),
+    main_db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     request=None  # For session retrieval if needed
 ):
     """
     Calculate MSA allocation from filtered data
     Returns 3 result sets: base analysis, generated colors, color variants
+    ALSO: Stores all results to database with sequence tracking and returns sequence_id
     
     Request Body:
         - slocs: List of SLOC codes to include
         - threshold: Minimum allocation percentage (0-100)
+        - date: Optional date filter
+        - filters: Optional filter dict
     
     Returns:
         - msa: Base MSA analysis table
         - msa_gen_clr: Generated colors analysis
         - msa_gen_clr_var: Color variants analysis
         - row_counts: Row counts for each result set
+        - sequence_id: Database sequence ID for this calculation
+        - storage_info: Info about stored results
     """
     try:
         if not body.slocs:
             raise HTTPException(status_code=400, detail="At least one SLOC is required")
         
-        logger.info(f"Calculating MSA for SLOCs: {body.slocs}, threshold: {body.threshold}, date: {body.date}")
+        logger.info(f"📊 Calculating MSA for SLOCs: {body.slocs}, threshold: {body.threshold}, date: {body.date}")
         
-        service = MSAService(db)
+        data_service = MSAService(db)
         
         # Load data with filters to improve performance
         # Use provided date and filters, or load all data if not provided
@@ -546,19 +575,97 @@ def calculate_msa(
         filters = body.filters if body.filters else {}
         
         logger.info(f"Loading data with filters - date: '{date_filter}', filters: {filters}")
-        df, _ = service.apply_filters(date_filter, filters)
+        df, _ = data_service.apply_filters(date_filter, filters)
         
         # Calculate MSA
-        results = service.calculate(df, body.slocs, body.threshold)
+        results = data_service.calculate(df, body.slocs, body.threshold)
         
-        logger.info(f"MSA calculation complete: {results['row_counts']}")
+        logger.info(f"✅ MSA calculation complete: {results['row_counts']}")
         
-        return APIResponse(
-            data=results,
-            message="MSA calculation completed successfully"
-        )
+        # ================================================================
+        # CREATE SEQUENCE RECORD AND QUEUE BACKGROUND STORAGE JOB (IF ENABLED)
+        # ================================================================
+        storage_service = MSAResultStorageService(db)
+        
+        # Check if auto_store_results is enabled (default: True for backward compatibility)
+        auto_store = getattr(body, 'auto_store_results', True)
+        logger.info(f"🔍 Auto-store results: {auto_store}")
+        
+        if not auto_store:
+            # Auto-store disabled: Return calculation results WITHOUT creating storage job
+            logger.info("⏭️  Skipping storage job creation (auto_store_results=False)")
+            return APIResponse(
+                data={
+                    **results,
+                    'sequence_id': None,
+                    'storage_job': None
+                },
+                message="MSA calculation completed. Not storing (auto-save disabled). Click 'Save to Database' to store manually."
+            )
+        
+        # Auto-store enabled: Create sequence and queue storage job
+        try:
+            # Get filter columns from request (or detect from provided filters)
+            filter_columns = body.filter_columns if hasattr(body, 'filter_columns') and body.filter_columns else list(filters.keys())
+            
+            # Create sequence record first (synchronously)
+            sequence_id = storage_service.create_sequence_record(
+                date_filter=date_filter,
+                filter_columns=filter_columns,
+                filters=filters,  # Pass dict directly, not JSON
+                threshold=int(body.threshold),
+                slocs=body.slocs,  # Pass list directly
+                msa_row_count=results['row_counts'].get('msa', 0),
+                gen_color_row_count=results['row_counts'].get('msa_gen_clr', 0),
+                color_variant_row_count=results['row_counts'].get('msa_gen_clr_var', 0),
+                created_by=getattr(current_user, 'username', 'system')
+            )
+            
+            logger.info(f"✅ Created sequence record: {sequence_id}")
+            
+            # Queue the data storage as background job
+            job_info = create_msa_storage_job(
+                db=main_db,
+                sequence_id=sequence_id,
+                calculation_results={
+                    'msa': results.get('msa', []),
+                    'msa_gen_clr': results.get('msa_gen_clr', []),
+                    'msa_gen_clr_var': results.get('msa_gen_clr_var', []),
+                },
+                created_by=getattr(current_user, 'username', 'system')
+            )
+            
+            logger.info(f"📋 Queued storage job: {job_info['job_id']}")
+            
+            # Return calculation results with job info
+            response_data = {
+                **results,  # Include all calculation results
+                'sequence_id': sequence_id,
+                'storage_job': {
+                    'job_id': job_info['job_id'],
+                    'status': job_info['status'],
+                    'position_in_queue': job_info['position_in_queue'],
+                    'total_rows': job_info['total_rows'],
+                }
+            }
+            
+            return APIResponse(
+                data=response_data,
+                message=f"MSA calculation completed. Storage queued as job {job_info['job_id']} (position {job_info['position_in_queue']})"
+            )
+        except Exception as storage_err:
+            logger.error(f"⚠️ Error creating storage job (but calculation succeeded): {storage_err}")
+            # Return calculation results even if job creation failed
+            return APIResponse(
+                data={
+                    **results,
+                    'sequence_id': 0,
+                    'storage_error': str(storage_err)
+                },
+                message=f"MSA calculation completed. Storage job error: {str(storage_err)}"
+            )
     except Exception as e:
-        logger.error(f"Error calculating MSA: {str(e)}")
+        logger.error(f"❌ Error calculating MSA: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -662,7 +769,7 @@ def run_msa_legacy(
 @router.post(
     "/save",
     response_model=APIResponse,
-    summary="Save MSA results"
+    summary="Save MSA results to database tables"
 )
 def save_msa_results(
     body: Dict[str, Any],
@@ -670,41 +777,423 @@ def save_msa_results(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Save MSA results to database
-    Generates a token for tracking
+    Save MSA calculation results to database tables (cl_msa, cl_generated_color, cl_color_variant)
+    
+    Request Body:
+        - msa: List of MSA analysis results
+        - msa_gen_clr: List of generated colors results
+        - msa_gen_clr_var: List of color variants results
+        - row_counts: Dict with row counts
+        - date_filter: Date filter applied
+        - filter_columns: List of filter columns
+        - filters: Dict of filter values
+        - threshold: Threshold percentage
+        - slocs: List of SLOC codes
     
     Returns:
-        - token: Unique token for these results
-        - threshold: Applied threshold
-        - filters: Applied filters
+        - sequence_id: Database sequence ID for these results
+        - storage_info: Info about stored results
+        - message: Success or error message
     """
     try:
-        from datetime import datetime
-        import random
+        logger.info(f"💾 Save Results button clicked - storing to database")
         
-        # Generate token
-        today = datetime.now().strftime("%Y%m%d")
-        rand = random.randint(1, 999)
-        token = f"MSA{today}-{rand:03d}"
+        # Extract data from request body
+        calculation_results = {
+            'msa': body.get('msa', []),
+            'msa_gen_clr': body.get('msa_gen_clr', []),
+            'msa_gen_clr_var': body.get('msa_gen_clr_var', []),
+            'row_counts': body.get('row_counts', {})
+        }
         
-        logger.info(f"Saving MSA results with token: {token}")
+        date_filter = body.get('date_filter', '')
+        filter_columns = body.get('filter_columns', [])
+        filters = body.get('filters', {})
+        threshold = body.get('threshold', 25)
+        slocs = body.get('slocs', [])
         
-        # In production, save to database
-        # data1 = body.get("data1", [])
-        # data2 = body.get("data2", [])
-        # data3 = body.get("data3", [])
-        # threshold = body.get("threshold")
-        # filters = body.get("filters", {})
+        logger.info(f"   📊 MSA: {len(calculation_results['msa'])} rows")
+        logger.info(f"   🎨 Generated Colors: {len(calculation_results['msa_gen_clr'])} rows")
+        logger.info(f"   🔸 Color Variants: {len(calculation_results['msa_gen_clr_var'])} rows")
+        logger.info(f"   📅 Date filter: {date_filter}")
+        logger.info(f"   ⚙️ Threshold: {threshold}")
+        
+        # Store results using storage service
+        storage_service = MSAResultStorageService(db)
+        
+        storage_info = storage_service.store_results(
+            calculation_results=calculation_results,
+            date_filter=date_filter,
+            filter_columns=filter_columns,
+            filters=filters,
+            threshold=threshold,
+            slocs=slocs,
+            created_by=getattr(current_user, 'username', 'system')
+        )
+        
+        sequence_id = storage_info.get('sequence_id', 0)
+        
+        logger.info(f"✅ Results stored successfully with sequence ID: {sequence_id}")
         
         return APIResponse(
             data={
-                "token": token,
-                "threshold": body.get("threshold"),
-                "filters": body.get("filters", {})
+                "sequence_id": sequence_id,
+                "storage_info": storage_info,
+                "msa_rows": len(calculation_results['msa']),
+                "gen_color_rows": len(calculation_results['msa_gen_clr']),
+                "color_variant_rows": len(calculation_results['msa_gen_clr_var'])
             },
-            message="MSA results saved with token"
+            message=f"✅ Results saved to database with Sequence ID: {sequence_id}"
         )
     except Exception as e:
-        logger.error(f"Error saving MSA results: {str(e)}")
+        logger.error(f"❌ Error saving MSA results: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error saving results: {str(e)}")
+
+
+# ============================================================================
+# Stored Results Management
+# ============================================================================
+
+@router.get(
+    "/results/sequences",
+    response_model=APIResponse,
+    summary="Get list of stored calculation sequences"
+)
+def get_stored_sequences(
+    limit: int = Query(10, ge=1, le=100, description="Number of sequences to return"),
+    db: Session = Depends(get_data_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get list of recent stored MSA calculation sequences
+    Shows sequence ID, calculation date, row counts, and user info
+    
+    Query Parameters:
+        - limit: Number of sequences to retrieve (default 10, max 100)
+    
+    Returns:
+        - List of sequence records with metadata
+    """
+    try:
+        logger.info(f"📋 Retrieving {limit} stored sequences")
+        
+        storage_service = MSAResultStorageService(db)
+        sequences = storage_service.get_latest_sequences(limit=limit)
+        
+        logger.info(f"✅ Retrieved {len(sequences)} sequences")
+        
+        return APIResponse(
+            data={
+                "sequences": sequences,
+                "total_retrieved": len(sequences)
+            },
+            message=f"Retrieved {len(sequences)} stored sequences"
+        )
+    except Exception as e:
+        logger.error(f"Error retrieving sequences: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get(
+    "/results/{sequence_id}",
+    response_model=APIResponse,
+    summary="Get stored MSA calculation results by sequence ID"
+)
+def get_stored_results(
+    sequence_id: int = Path(..., ge=1, description="Calculation sequence ID"),
+    table: str = Query("msa", regex="^(msa|msa_gen_clr|msa_gen_clr_var)$", description="Which result table to retrieve"),
+    db: Session = Depends(get_data_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Retrieve stored MSA calculation results by sequence ID
+    
+    Path Parameters:
+        - sequence_id: Calculation sequence ID (required)
+    
+    Query Parameters:
+        - table: Result table to retrieve - msa, msa_gen_clr, or msa_gen_clr_var
+    
+    Returns:
+        - data: List of result rows
+        - metadata: Calculation metadata (date, filters, threshold, etc.)
+        - row_count: Number of rows in this result set
+    """
+    try:
+        logger.info(f"📂 Retrieving results for sequence {sequence_id}, table: {table}")
+        
+        storage_service = MSAResultStorageService(db)
+        data, metadata = storage_service.get_sequence_data(sequence_id, table)
+        
+        if not data:
+            logger.warning(f"No data found for sequence {sequence_id}")
+            return APIResponse(
+                data={
+                    "sequence_id": sequence_id,
+                    "table": table,
+                    "data": [],
+                    "metadata": {},
+                    "row_count": 0
+                },
+                message=f"No data found for sequence {sequence_id}"
+            )
+        
+        logger.info(f"✅ Retrieved {len(data)} rows from {table}")
+        
+        return APIResponse(
+            data={
+                "sequence_id": sequence_id,
+                "table": table,
+                "data": data,
+                "metadata": metadata,
+                "row_count": len(data)
+            },
+            message=f"Retrieved {len(data)} rows from sequence {sequence_id}"
+        )
+    except Exception as e:
+        logger.error(f"Error retrieving stored results: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get(
+    "/results/{sequence_id}/summary",
+    response_model=APIResponse,
+    summary="Get summary of a stored calculation"
+)
+def get_sequence_summary(
+    sequence_id: int = Path(..., ge=1, description="Calculation sequence ID"),
+    db: Session = Depends(get_data_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get summary/metadata of a stored calculation sequence
+    Shows calculation parameters, row counts, and timestamp
+    
+    Path Parameters:
+        - sequence_id: Calculation sequence ID (required)
+    
+    Returns:
+        - calculation_date: When calculation was performed
+        - date_filter: Date filter that was applied
+        - filter_columns: Columns that were used for filtering
+        - filters: Filter values that were applied
+        - threshold: Threshold percentage used
+        - slocs: SLOC codes that were included
+        - row_counts: Number of rows in each result table
+        - created_by: User who performed calculation
+        - status: Status of the calculation (COMPLETED, ERROR, etc.)
+    """
+    try:
+        logger.info(f"📊 Getting summary for sequence {sequence_id}")
+        
+        storage_service = MSAResultStorageService(db)
+        data, metadata = storage_service.get_sequence_data(sequence_id, 'msa')
+        
+        if not metadata:
+            logger.warning(f"No metadata found for sequence {sequence_id}")
+            raise HTTPException(status_code=404, detail=f"Sequence {sequence_id} not found")
+        
+        # Build summary response
+        summary = {
+            "sequence_id": sequence_id,
+            "calculation_date": metadata.get('calculation_date'),
+            "date_filter": metadata.get('date_filter'),
+            "filter_columns": metadata.get('filter_columns', []),
+            "filters": metadata.get('filters', {}),
+            "threshold": metadata.get('threshold'),
+            "slocs": metadata.get('slocs', []),
+            "row_counts": {
+                "msa": metadata.get('msa_row_count', 0),
+                "msa_gen_clr": metadata.get('gen_color_row_count', 0),
+                "msa_gen_clr_var": metadata.get('color_variant_row_count', 0)
+            },
+            "created_by": metadata.get('created_by'),
+            "status": metadata.get('status')
+        }
+        
+        logger.info(f"✅ Summary retrieved for sequence {sequence_id}")
+        
+        return APIResponse(
+            data=summary,
+            message=f"Summary retrieved for sequence {sequence_id}"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving sequence summary: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# Background Job Management
+# ============================================================================
+
+@router.get(
+    "/jobs/{job_id}",
+    response_model=APIResponse,
+    summary="Get MSA storage job status"
+)
+def get_storage_job_status(
+    job_id: str = Path(..., description="Job ID"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get the status of an MSA storage job
+    
+    Path Parameters:
+        - job_id: MSA storage job ID
+    
+    Returns:
+        - job_id: Job ID
+        - sequence_id: Sequence ID for this calculation
+        - status: Current status (queued, running, completed, failed)
+        - total_rows: Total rows to process
+        - processed_rows: Rows processed so far
+        - inserted_msa: Rows inserted into cl_msa
+        - inserted_colors: Rows inserted into cl_generated_color
+        - inserted_variants: Rows inserted into cl_color_variant
+        - error_message: Error message if failed
+        - created_at: When job was created
+        - started_at: When job started processing
+        - completed_at: When job completed
+        - duration_ms: Processing duration in milliseconds
+    """
+    try:
+        logger.info(f"📋 Getting job status: {job_id}")
+        
+        job_status = get_job_status(db, job_id)
+        
+        if not job_status:
+            logger.warning(f"⚠️ Job not found: {job_id}")
+            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+        
+        return APIResponse(
+            data=job_status,
+            message=f"Job {job_id} status: {job_status['status']}"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error getting job status: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get(
+    "/jobs",
+    response_model=APIResponse,
+    summary="List MSA storage jobs"
+)
+def list_storage_jobs(
+    status: str = Query(None, description="Filter by status (pending, running, completed, failed)"),
+    limit: int = Query(20, ge=1, le=100, description="Maximum number of jobs to return"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    List MSA storage jobs with optional status filter
+    
+    Query Parameters:
+        - status: Optional status filter (pending, running, completed, failed)
+        - limit: Maximum jobs to return (default 20, max 100)
+    
+    Returns:
+        - jobs: List of job records
+    """
+    try:
+        logger.info(f"📋 Listing MSA storage jobs (status={status}, limit={limit})")
+        
+        jobs = list_jobs(db, status, limit)
+        
+        return APIResponse(
+            data={
+                'jobs': jobs,
+                'count': len(jobs),
+                'filtered_by_status': status or 'all'
+            },
+            message=f"Retrieved {len(jobs)} jobs"
+        )
+    except Exception as e:
+        logger.error(f"❌ Error listing jobs: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post(
+    "/jobs/{job_id}/cancel",
+    response_model=APIResponse,
+    summary="Cancel an MSA storage job"
+)
+def cancel_storage_job(
+    job_id: str = Path(..., description="Job ID to cancel"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Cancel a queued MSA storage job
+    Can only cancel jobs that haven't started processing yet
+    
+    Path Parameters:
+        - job_id: MSA storage job ID to cancel
+    
+    Returns:
+        - job_id: Job ID
+        - status: New status (cancelled)
+        - message: Success or failure message
+    """
+    try:
+        logger.info(f"🛑 Cancelling job: {job_id}")
+        
+        from app.services.msa_job_service import cancel_job
+        success = cancel_job(db, job_id)
+        
+        if success:
+            logger.info(f"✅ Job {job_id} cancelled")
+            return APIResponse(
+                data={'job_id': job_id, 'status': 'cancelled'},
+                message=f"Job {job_id} cancelled successfully"
+            )
+        else:
+            logger.warning(f"⚠️ Could not cancel job {job_id} (may already be running)")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Job {job_id} cannot be cancelled (already running or completed)"
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error cancelling job: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post(
+    "/jobs/cancel/all",
+    response_model=APIResponse,
+    summary="Cancel all pending MSA storage jobs"
+)
+def cancel_all_storage_jobs(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Cancel all pending/queued MSA storage jobs
+    
+    Returns:
+        - cancelled_count: Number of jobs cancelled
+        - message: Success message
+    """
+    try:
+        logger.info(f"🛑 Cancelling all pending jobs")
+        
+        from app.services.msa_job_service import cancel_all_pending_jobs
+        count = cancel_all_pending_jobs(db)
+        
+        logger.info(f"✅ Cancelled {count} pending jobs")
+        return APIResponse(
+            data={'cancelled_count': count},
+            message=f"Cancelled {count} pending MSA storage jobs"
+        )
+    except Exception as e:
+        logger.error(f"❌ Error cancelling all jobs: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 

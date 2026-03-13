@@ -132,3 +132,25 @@ class DataChangeLog(Base):
     batch_id = Column(String(100), index=True)  # Groups related changes
     row_index = Column(Integer)  # Row number in batch (for uploads)
 
+
+class MSAStorageJob(Base):
+    """Background MSA result storage job tracking."""
+    __tablename__ = "msa_storage_jobs"
+    
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    job_id = Column(String(50), nullable=False, unique=True, index=True)
+    sequence_id = Column(Integer, nullable=False, index=True)
+    status = Column(String(20), nullable=False, default='pending')  # pending, running, completed, failed
+    total_rows = Column(Integer)  # Total rows across all three tables
+    processed_rows = Column(Integer, default=0)
+    inserted_msa = Column(Integer, default=0)  # Rows inserted into cl_msa
+    inserted_colors = Column(Integer, default=0)  # Rows inserted into cl_generated_color
+    inserted_variants = Column(Integer, default=0)  # Rows inserted into cl_color_variant
+    error_message = Column(Text)
+    error_details = Column(Text)  # JSON
+    created_by = Column(String(100), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    started_at = Column(DateTime)
+    completed_at = Column(DateTime)
+    duration_ms = Column(Integer)
+

@@ -26,6 +26,7 @@ const dataManagementItems = [
 // Data Preparation submenu
 const dataPreparationItems = [
   { label: 'MSA Stock Calculation', path: '/msa', icon: BarChart3 },
+  { label: 'Contribution Percentage', path: '/contribution', icon: BarChart3 },
 ]
 
 // Settings submenu (admin features)

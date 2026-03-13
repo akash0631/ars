@@ -20,6 +20,7 @@ import RLSPage from '@/pages/RLSPage'
 import TableManagementPage from '@/pages/TableManagementPage'
 import SettingsPage from '@/pages/SettingsPage'
 import MSAStockCalculationPage from '@/pages/MSAStockCalculationPage'
+import ContributionPercentageCalculationPage from '@/pages/ContributionPercentageCalculationPage'
 import JobsDashboardPage from '@/pages/JobsDashboardPage'
 // Duplicate imports removed
 
@@ -54,6 +55,7 @@ export default function App() {
         <Route path="editor" element={<DataEditorPage />} />
         {/* Data Preparation */}
         <Route path="msa" element={<MSAStockCalculationPage />} />
+        <Route path="contribution" element={<ContributionPercentageCalculationPage />} />
         {/* Allocations */}
         <Route path="allocations" element={<AllocationsPage />} />
         <Route path="allocations/new" element={<NewAllocationPage />} />

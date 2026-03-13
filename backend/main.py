@@ -6,6 +6,7 @@ Enterprise-grade backend for multi-store retail management.
 import os
 import sys
 from contextlib import asynccontextmanager
+from datetime import datetime
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -58,9 +59,51 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Super admin bootstrap skipped: {e}")
 
+    # Clean up any hanging jobs from previous runs
+    try:
+        from app.models.audit import MSAStorageJob
+        db = SessionLocal()
+        try:
+            hanging_jobs = db.query(MSAStorageJob).filter(
+                MSAStorageJob.status == 'running'
+            ).all()
+            if hanging_jobs:
+                logger.warning(f"Found {len(hanging_jobs)} hanging jobs from previous server run, marking as failed")
+                for job in hanging_jobs:
+                    job.status = 'failed'
+                    job.error_message = 'Job interrupted - server was stopped while job was running'
+                    job.completed_at = datetime.utcnow()
+                db.commit()
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning(f"Could not clean up hanging jobs: {e}")
+
     logger.info(f"✅ {settings.APP_NAME} started on {settings.HOST}:{settings.PORT}")
     yield
-    logger.info(f"Shutting down {settings.APP_NAME}")
+    logger.warning(f"Shutting down {settings.APP_NAME}...")
+    
+    # Mark any currently running job as interrupted
+    try:
+        from app.models.audit import MSAStorageJob
+        db = SessionLocal()
+        try:
+            running_jobs = db.query(MSAStorageJob).filter(
+                MSAStorageJob.status == 'running'
+            ).all()
+            if running_jobs:
+                logger.warning(f"Found {len(running_jobs)} running jobs at shutdown, marking as failed")
+                for job in running_jobs:
+                    job.status = 'failed'
+                    job.error_message = 'Job interrupted - server shutdown'
+                    job.completed_at = datetime.utcnow()
+                db.commit()
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning(f"Could not mark running jobs as failed: {e}")
+    
+    logger.info(f"✅ {settings.APP_NAME} stopped")
 
 
 # ============================================================================

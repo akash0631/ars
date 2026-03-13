@@ -5,16 +5,16 @@
     "server": "HOPC560"
   },
   "email": {
-    "smtp_server": "",
+    "smtp_server": "smtp.office365.com",
     "smtp_port": 587,
-    "smtp_username": "",
-    "smtp_password": "",
-    "from_address": "",
+    "smtp_username": "santosh@v2kart.com",
+    "smtp_password": "vrl@1234",
+    "from_address": "santosh@v2kart.com",
     "use_tls": true,
     "notifications_enabled": false
   },
   "application": {
-    "app_name": "ARS - Allocation & Reporting System",
+    "app_name": "ARS ",
     "max_upload_size_mb": 100,
     "session_timeout_minutes": 60,
     "enable_audit_logging": true,

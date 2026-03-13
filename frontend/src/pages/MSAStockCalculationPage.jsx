@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Calculator, Filter, Calendar, Save, Plus, Trash2, Download, X, ChevronDown } from 'lucide-react';
 import { msaAPI } from '../services/api';
 import toast from 'react-hot-toast';
+import CascadingFilters from '../components/filters/CascadingFilters';
 
 function AddFilterColumnModal({ columns, existingFilters, onAdd, onClose }) {
   const [search, setSearch] = useState('');
@@ -55,8 +56,6 @@ export default function MSAStockCalculationPage() {
   const [tableList, setTableList] = useState([]);
   const [filterColumns, setFilterColumns] = useState([]);
   const [filters, setFilters] = useState({});
-  const [data, setData] = useState([]);
-  const [columns, setColumns] = useState([]);
   const [loading, setLoading] = useState(false);
   const [token, setToken] = useState('');
   const [saveStatus, setSaveStatus] = useState('');
@@ -69,6 +68,41 @@ export default function MSAStockCalculationPage() {
   const [selectedPreset, setSelectedPreset] = useState('msa_filter');
   const [calculationResults, setCalculationResults] = useState(null);
   const [expandResults, setExpandResults] = useState(false);
+  const [sequenceId, setSequenceId] = useState(null);
+  const [sequencesList, setSequencesList] = useState([]);
+  const [storageJob, setStorageJob] = useState(null); // Background job info
+  
+  const [cascadingFilterSelection, setCascadingFilterSelection] = useState({});
+  const [autoStoreResults, setAutoStoreResults] = useState(true); // Auto-store checkbox
+  
+  // Ref to track if initialization is complete (prevents auto-load on mount)
+  const isInitializedRef = useRef(false);
+  
+  // Define cascading hierarchy column names
+  const cascadingColumnHierarchy = ['ST_CD', 'SLOC', 'DIV'];
+  
+  // Check if any cascading columns are selected
+  const hasCascadingColumns = filterColumns && filterColumns.some(col => 
+    cascadingColumnHierarchy.includes(col)
+  );
+  
+  // Get only cascading columns that are selected
+  const selectedCascadingColumns = filterColumns?.filter(col => 
+    cascadingColumnHierarchy.includes(col)
+  ) || [];
+  
+  // Get non-cascading columns (any column NOT in the cascade hierarchy)
+  const nonCascadingColumns = filterColumns?.filter(col => 
+    !cascadingColumnHierarchy.includes(col)
+  ) || [];
+  
+  // Build cascading filter hierarchy for selected columns
+  const activeCascadingHierarchy = cascadingColumnHierarchy
+    .filter(col => selectedCascadingColumns.includes(col))
+    .map(col => {
+      const labels = { ST_CD: 'Store Code', SLOC: 'Store Location', DIV: 'Division' };
+      return { name: col, label: labels[col] };
+    });
 
   // Helper function to download JSON as CSV
   const downloadCSV = (data, filename) => {
@@ -236,6 +270,17 @@ export default function MSAStockCalculationPage() {
         
         // Try to show error to user
         console.warn('⚠️ Using fallback date due to API error');
+        
+        // Mark initialization as complete
+        isInitializedRef.current = true;
+        console.log('✅ Initialization complete, will now auto-load presets');
+      })
+      .then(() => {
+        // Mark initialization as complete (success path)
+        if (!isInitializedRef.current) {
+          isInitializedRef.current = true;
+          console.log('✅ Initialization complete (success), will now auto-load presets');
+        }
       });
   }, []);
 
@@ -258,6 +303,28 @@ export default function MSAStockCalculationPage() {
   // Toggle filter value (for tags)
   const handleToggleFilterValue = (col, value) => {
     handleFilterChange(col, value);
+  };
+
+  // Handle cascading filter changes
+  const handleCascadingFilterSelectionChange = (updatedSelection) => {
+    console.log('🔗 Cascading filter selection changed:', updatedSelection);
+    setCascadingFilterSelection(updatedSelection);
+    
+    // Merge cascading filters into the main filter state
+    const mergedFilters = { ...filters };
+    
+    // Add cascading filter selections
+    Object.entries(updatedSelection).forEach(([col, values]) => {
+      if (values && values.length > 0) {
+        mergedFilters[col] = values;
+      } else {
+        // Remove if empty
+        delete mergedFilters[col];
+      }
+    });
+    
+    setFilters(mergedFilters);
+    console.log('📦 Merged filters:', mergedFilters);
   };
 
   // Save filter preset
@@ -309,6 +376,18 @@ export default function MSAStockCalculationPage() {
       });
   };
 
+  // Auto-load preset when selectedPreset changes after initialization is complete
+  useEffect(() => {
+    // Only auto-load if:
+    // 1. Initialization is complete (isInitializedRef.current = true)
+    // 2. selectedPreset is set
+    // 3. savedPresets are loaded  
+    if (isInitializedRef.current && selectedPreset && Object.keys(savedPresets).length > 0) {
+      console.log(`🔄 Auto-loading preset: "${selectedPreset}"`);
+      handleLoadPreset();
+    }
+  }, [selectedPreset]); // Only run when selectedPreset changes
+
   // Load filter preset from backend data
   const handleLoadPreset = () => {
     if (!selectedPreset || !savedPresets[selectedPreset]) {
@@ -331,13 +410,34 @@ export default function MSAStockCalculationPage() {
         // Store loaded config in a temporary variable to check later
         const loadedColumns = configData.filter_columns || [];
         const loadedFilters = configData.filters || {};
+        const cascadingColumnHierarchy = ['ST_CD', 'SLOC', 'DIV'];
         
-        // Update state - use setState callback to ensure state is updated before returning
+        // Separate cascading and normal filters
+        const loadedCascadingSelection = {};
+        const loadedNormalFilters = {};
+        
+        Object.entries(loadedFilters).forEach(([col, values]) => {
+          if (cascadingColumnHierarchy.includes(col)) {
+            loadedCascadingSelection[col] = values || [];
+          } else {
+            loadedNormalFilters[col] = values || [];
+          }
+        });
+        
+        console.log(`🔗 Cascading selections:`, loadedCascadingSelection);
+        console.log(`📝 Normal filters:`, loadedNormalFilters);
+        
+        // Update state - restore both cascading and normal filters
         setFilterColumns(loadedColumns);
-        setFilters(loadedFilters);
+        setFilters(loadedFilters); // Keep all filters for Apply Filters button
+        setCascadingFilterSelection(loadedCascadingSelection); // Restore cascading state
         
         // Also update the window object for debugging
-        window.__loadedPresetConfig = { columns: loadedColumns, filters: loadedFilters };
+        window.__loadedPresetConfig = { 
+          columns: loadedColumns, 
+          filters: loadedFilters,
+          cascadingSelection: loadedCascadingSelection 
+        };
         console.log(`💾 Stored in window.__loadedPresetConfig`);
         
         // Fetch distinct values for each loaded column
@@ -354,7 +454,26 @@ export default function MSAStockCalculationPage() {
           
           // Fetch distinct values for each column
           const distinctPromises = loadedColumns.map(col =>
-            msaAPI.getDistinct(col, date)
+            // For cascading columns, pass parent filters
+            (() => {
+              const parentFilters = {};
+              const colIndex = cascadingColumnHierarchy.indexOf(col);
+              
+              if (colIndex > 0 && loadedCascadingSelection) {
+                for (let i = 0; i < colIndex; i++) {
+                  const parentCol = cascadingColumnHierarchy[i];
+                  if (loadedCascadingSelection[parentCol]?.length > 0) {
+                    parentFilters[parentCol] = loadedCascadingSelection[parentCol];
+                  }
+                }
+              }
+              
+              const filtersParam = Object.keys(parentFilters).length > 0 
+                ? JSON.stringify(parentFilters) 
+                : null;
+              
+              return msaAPI.getDistinct(col, date, filtersParam);
+            })()
               .then(res => {
                 const values = res.data?.data?.values || [];
                 console.log(`  ✅ ${col}: ${values.length} values`);
@@ -387,7 +506,8 @@ export default function MSAStockCalculationPage() {
           console.log(`✅ State verification after load:`);
           console.log(`   filterColumns: ${JSON.stringify(loadedColumns)}`);
           console.log(`   filters: ${JSON.stringify(loadedFilters)}`);
-          toast.success(`Preset loaded: ${loadedColumns.length} columns, ${Object.keys(loadedFilters).length} filters. Click "Apply Filters" to continue.`, { duration: 4000 });
+          console.log(`   cascadingFilterSelection: ${JSON.stringify(loadedCascadingSelection)}`);
+          toast.success(`Preset loaded: ${loadedColumns.length} columns, ${Object.keys(loadedFilters).length} filters applied.`, { duration: 4000 });
         }, 100);
       })
       .catch(err => {
@@ -462,97 +582,27 @@ export default function MSAStockCalculationPage() {
     setDistinctValues(prev => { const n = { ...prev }; delete n[col]; return n; });
   };
 
-  // Apply filters
-  const handleFetch = () => {
-    if (!date) {
-      toast.error('Please select a date');
-      return;
-    }
-
-    setLoading(true);
-    console.log(`\n🔍 handleFetch called at ${new Date().toLocaleTimeString()}`);
-    console.log(`   Current state - filterColumns:`, filterColumns);
-    console.log(`   Current state - filters:`, filters);
-    console.log(`   Date:`, date);
-
-    // Build filter object with selected values
-    const filterPayload = {};
-    const colsToProcess = filterColumns && filterColumns.length > 0 ? filterColumns : [];
-    
-    console.log(`📋 Processing ${colsToProcess.length} filter columns:`);
-    
-    colsToProcess.forEach(col => {
-      const colFilters = filters[col];
-      console.log(`   [${col}] = ${JSON.stringify(colFilters)}`);
-      
-      if (colFilters && Array.isArray(colFilters) && colFilters.length > 0) {
-        filterPayload[col] = colFilters;
-      }
-    });
-
-    console.log(`📦 Final payload:`, {
-      date,
-      filters: filterPayload,
-      numFilters: Object.keys(filterPayload).length
-    });
-    
-    if (Object.keys(filterPayload).length === 0 && colsToProcess.length > 0) {
-      console.warn(`⚠️ WARNING: No filter values in payload despite having ${colsToProcess.length} columns!`);
-    }
-
-    if (!date || !filterPayload || Object.keys(filterPayload).length === 0) {
-      console.warn(`⚠️ Not sending empty request`);
-      toast.warning('Please select at least one filter value');
-      setLoading(false);
-      return;
-    }
-
-    console.log(`📤 Sending to backend...`);
-    msaAPI.applyFilters({
-      date,
-      filters: filterPayload
-    })
-      .then(res => {
-        console.log(`✅ Backend response:`, res.data);
-        const resultData = res.data.data;
-        setColumns(resultData.columns || []);
-        console.log(`📊 Result: ${resultData.row_count} rows, ${resultData.columns.length} columns, ${resultData.total_stock_qty} total stock`);
-        
-        // Set actual data rows or create placeholder if data not included in response
-        const dataRows = resultData.data || Array(resultData.row_count).fill({});
-        setData(dataRows);
-        
-        setLoading(false);
-        toast.success(`Success! ${resultData.row_count} rows loaded. Total: ${resultData.total_stock_qty}`, { duration: 4000 });
-      })
-      .catch(err => {
-        console.error(`❌ Error:`, err);
-        console.error(`   Status:`, err.response?.status);
-        console.error(`   Message:`, err.response?.data?.detail || err.message);
-        setLoading(false);
-        const errorMsg = err.response?.data?.detail || err.response?.data?.message || err.message || 'Unknown error';
-        toast.error(`Error: ${errorMsg}`);
-      });
-  };
-
   // Calculate MSA - call new calculate endpoint
   const handleCalculateMSA = () => {
-    if (!sloc) {
-      toast.error('Please select SLOC(s)');
+    // Use SLOCs from filters (auto-apply all filtered SLOCs)
+    const slocList = filters['SLOC'] || cascadingFilterSelection['SLOC'] || [];
+
+    if (!slocList || slocList.length === 0) {
+      toast.error('Please select SLOC in filters first');
       return;
     }
 
     setLoading(true);
-    const slocList = Array.isArray(sloc) ? sloc : [sloc];
     const threshold = parseInt(document.getElementById('msa-threshold')?.value || 25);
 
-    console.log('🧮 Calculating MSA:', { slocs: slocList, threshold, date, filters });
+    console.log('🧮 Calculating MSA:', { slocs: slocList, threshold, date, filters, autoStore: autoStoreResults });
 
     msaAPI.calculate({
       slocs: slocList,
       threshold,
       date,
-      filters
+      filters,
+      auto_store_results: autoStoreResults
     })
       .then(res => {
         console.log('✅ MSA Calculated:', res.data);
@@ -560,7 +610,44 @@ export default function MSAStockCalculationPage() {
         setCalculationResults(result); // Store for export
         setExpandResults(true); // Auto-expand results wrapper
         
-        setSaveStatus(`✅ Calculation complete! Rows: ${result.row_counts.msa}`);
+        // Extract and display sequence ID (if auto-store enabled)
+        const seqId = result.sequence_id;
+        
+        if (autoStoreResults && seqId) {
+          // ✅ AUTO-STORE ENABLED: Show sequence ID and update list
+          setSequenceId(seqId);
+          
+          // Store job info if present
+          if (result.storage_job) {
+            setStorageJob(result.storage_job);
+            console.log(`📋 Storage job queued: ${result.storage_job.job_id} (Position: ${result.storage_job.position_in_queue})`);
+          }
+          
+          console.log(`📦 Auto-stored with sequence ID: ${seqId}`);
+          toast.success(`✅ Auto-saved! (Sequence: ${seqId}) - Storage in progress...`, { duration: 4000 });
+          
+          // Load the latest sequences list
+          msaAPI.getStoredSequences(10)
+            .then(seqRes => {
+              setSequencesList(seqRes.data.data.sequences || []);
+              console.log(`📋 Loaded ${seqRes.data.data.sequences.length} stored sequences`);
+            })
+            .catch(err => console.warn('Could not load sequences list:', err));
+          
+          setSaveStatus(`✅ Calculation auto-saved! Sequence: ${seqId} (Data storage in progress...)`);
+        } else if (!autoStoreResults) {
+          // ❌ AUTO-STORE DISABLED: Don't show sequence, user must click Save button
+          setSequenceId(null);
+          setStorageJob(null);
+          console.log(`📋 Auto-store disabled - user must click "Save to Database" button`);
+          toast.success(`✅ Calculation complete! Click "💾 Save to Database" to store.`, { duration: 5000 });
+          setSaveStatus(`✅ Calculation complete! Click "Save to Database" to store results.`);
+        } else {
+          // Fallback
+          toast.success('✅ Calculation complete!', { duration: 4000 });
+          setSaveStatus(`✅ Calculation complete! Rows: ${result.row_counts.msa}`);
+        }
+        
         setLoading(false);
         
         // Scroll to results with a small delay to ensure DOM is updated
@@ -636,32 +723,55 @@ export default function MSAStockCalculationPage() {
     container.innerHTML = html;
   };
 
-  // Save MSA results
+  // Save MSA results to database
   const handleSave = () => {
-    if (!data || data.length === 0) {
-      toast.error('No data to save');
+    if (!calculationResults) {
+      toast.error('Please calculate MSA first');
       return;
     }
 
-    console.log('💾 Saving MSA results...');
+    console.log('💾 Saving MSA results to database...');
+    setLoading(true);
+
+    const threshold = parseInt(document.getElementById('msa-threshold')?.value || 25);
 
     msaAPI.save({
-      data1: data,
-      data2: data,
-      data3: data,
-      threshold: parseInt(document.getElementById('msa-threshold')?.value || 25),
-      filters,
-      date
+      // Calculation results
+      msa: calculationResults.msa || [],
+      msa_gen_clr: calculationResults.msa_gen_clr || [],
+      msa_gen_clr_var: calculationResults.msa_gen_clr_var || [],
+      row_counts: calculationResults.row_counts || {},
+      
+      // Filter information
+      date_filter: date || '',
+      filter_columns: filterColumns || [],
+      filters: filters || {},
+      threshold: threshold,
+      slocs: Array.isArray(sloc) ? sloc : [sloc]
     })
       .then(res => {
-        console.log('✅ Saved:', res.data);
-        const token = res.data.data.token;
-        setToken(token);
-        setSaveStatus(`✅ Saved with token: ${token}`);
+        console.log('✅ Saved to database:', res.data);
+        const seqId = res.data.data.sequence_id;
+        setSequenceId(seqId);
+        setSaveStatus(`✅ Saved to database! Sequence ID: ${seqId}`);
+        toast.success(`✅ Results saved! (Sequence: ${seqId})`, { duration: 4000 });
+        
+        // Reload sequences list
+        msaAPI.getStoredSequences(10)
+          .then(seqRes => {
+            setSequencesList(seqRes.data.data.sequences || []);
+            console.log(`📋 Reloaded ${seqRes.data.data.sequences.length} sequences`);
+          })
+          .catch(err => console.warn('Could not reload sequences:', err));
+        
+        setLoading(false);
       })
       .catch(err => {
         console.error('❌ Error saving:', err);
-        setSaveStatus(`❌ Error: ${err.message}`);
+        const errMsg = err.response?.data?.detail || err.message;
+        setSaveStatus(`❌ Error: ${errMsg}`);
+        toast.error(`Error saving: ${errMsg}`);
+        setLoading(false);
       });
   };
 
@@ -726,10 +836,24 @@ export default function MSAStockCalculationPage() {
             )}
           </div>
 
-          {/* Display selected filter values for each column */}
-          {filterColumns && filterColumns.length > 0 && (
-            <div className="space-y-3 border-t pt-3">
-              {filterColumns.map(col => (
+          {/* Cascading Filters (if cascade columns selected) */}
+          {hasCascadingColumns && (
+            <div className="border-t pt-3">
+              <p className="label mb-3">Cascading Filters (Multi-select)</p>
+              <CascadingFilters
+                filterHierarchy={activeCascadingHierarchy}
+                date={date}
+                selectedFilters={cascadingFilterSelection}
+                onSelectionChange={handleCascadingFilterSelectionChange}
+                className="w-full"
+              />
+            </div>
+          )}
+
+          {/* Normal Filters (for non-cascading columns) */}
+          {nonCascadingColumns.length > 0 && (
+            <div className={`space-y-3 ${hasCascadingColumns ? 'border-t pt-3' : 'border-t pt-3'}`}>
+              {nonCascadingColumns.map(col => (
                 <div key={col}>
                   <p className="label mb-1.5">Filter by {col}</p>
                   <div className="flex flex-wrap gap-1.5">
@@ -760,27 +884,41 @@ export default function MSAStockCalculationPage() {
         </div>
       </div>
 
-      {/* Date & Presets Grid */}
+      {/* Date, Threshold & Presets Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Date Selection Card */}
+        {/* Date & Threshold Selection Card */}
         <div className="card">
           <div className="card-header flex items-center gap-2">
             <Calendar size={16} className="text-primary-600" />
-            <h2 className="font-semibold text-[13px] text-gray-900">Date Selection</h2>
+            <h2 className="font-semibold text-[13px] text-gray-900">Date & Threshold</h2>
           </div>
-          
-          <div className="card-body">
-            <label className="label mb-2">Select Date</label>
-            <input 
-              type="date"
-              className="input"
-              value={date}
-              onChange={e => {
-                const newDate = e.target.value;
-                console.log('📅 Date selected:', newDate);
-                setDate(newDate);
-              }}
-            />
+
+          <div className="card-body space-y-3">
+            <div>
+              <label className="label mb-2">Select Date</label>
+              <input
+                type="date"
+                className="input"
+                value={date}
+                onChange={e => {
+                  const newDate = e.target.value;
+                  console.log('📅 Date selected:', newDate);
+                  setDate(newDate);
+                }}
+              />
+            </div>
+            <div>
+              <label className="label mb-2">Threshold (%)</label>
+              <input
+                type="number"
+                id="msa-threshold"
+                className="input"
+                defaultValue={25}
+                min={0}
+                max={100}
+                placeholder="25"
+              />
+            </div>
           </div>
         </div>
 
@@ -856,40 +994,22 @@ export default function MSAStockCalculationPage() {
         </div>
       </div>
 
-      {/* Apply Filters Button */}
-      <button 
-        className="btn-primary w-full" 
-        onClick={() => {
-          console.log('🔍 Apply Filters clicked. Date:', date, 'Filters:', filters);
-          if (!date) {
-            console.warn('⚠️ No date selected');
-            toast.error('Please select a date first');
-            return;
-          }
-          handleFetch();
-        }}
-        disabled={loading || !date}
-        type="button"
-      >
-        {loading ? '⏳ Loading...' : '✅ Apply Filters'}
-      </button>
-
-      {/* Configuration Summary Section */}
-      {data && data.length > 0 && (
+      {/* Configuration Summary Section - Shows when filters are selected */}
+      {filterColumns && filterColumns.length > 0 && Object.keys(filters).some(k => filters[k]?.length > 0) && (
         <div className="card border-l-4 border-l-primary-500">
-          <div className="card-header">
-            <h2 className="font-semibold text-[13px] text-gray-900">📋 Active Configuration</h2>
-          </div>
-          
-          <div className="card-body">
+          {/* <div className="card-header">
+            <h2 className="font-semibold text-[13px] text-gray-900">📋 Active Filter Configuration</h2>
+          </div> */}
+
+          {/* <div className="card-body">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-              {filterColumns && filterColumns.length > 0 && filterColumns.map(col => (
+              {filterColumns.map(col => (
                 <div key={col}>
                   <div className="text-[10px] font-semibold text-gray-600 uppercase tracking-wide mb-1.5">{col}</div>
                   {filters[col] && filters[col].length > 0 ? (
                     <div className="flex flex-wrap gap-1">
                       {filters[col].map((val, idx) => (
-                        <span 
+                        <span
                           key={idx}
                           className="inline-flex items-center bg-primary-500 text-white px-2 py-0.5 rounded-full text-[9px] font-medium"
                         >
@@ -907,105 +1027,69 @@ export default function MSAStockCalculationPage() {
             <div className="pt-3 border-t border-gray-100 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-500 text-white text-[9px] font-bold">✓</span>
-                <span className="text-[11px] text-gray-600">Status: <span className="text-emerald-600 font-semibold">Ready</span></span>
+                <span className="text-[11px] text-gray-600">Status: <span className="text-emerald-600 font-semibold">Ready for Calculation</span></span>
               </div>
-              <p className="text-[10px] text-gray-500">📊 <strong>{data.length}</strong> rows loaded</p>
+              <p className="text-[10px] text-gray-500">📊 <strong>{Object.values(filters).filter(v => v?.length > 0).length}</strong> filters active</p>
             </div>
-          </div>
+          </div> */}
         </div>
       )}
 
-      {/* MSA Calculation Section */}
+      {/* MSA Calculation Section - Calculate Button & Auto-save side by side */}
       <div className="card">
         <div className="card-header">
           <h2 className="font-semibold text-[13px] text-gray-900">🧮 MSA Calculation</h2>
         </div>
-        
-        <div className="card-body space-y-4">
-          {/* SLOC Selection */}
-          <div>
-            <label className="label mb-2">Select SLOC Codes <span className="text-red-500">*</span></label>
-            {data && data.length > 0 && filters['SLOC'] && filters['SLOC'].length > 0 ? (
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
-                {filters['SLOC'].map(slocCode => (
-                  <label key={slocCode} className="flex items-center gap-2 cursor-pointer p-2.5 border border-gray-200 rounded-lg hover:bg-primary-50 hover:border-primary-300 transition-all">
-                    <input 
-                      type="checkbox"
-                      checked={Array.isArray(sloc) ? sloc.includes(slocCode) : sloc === slocCode}
-                      onChange={e => {
-                        if (e.target.checked) {
-                          setSloc(prev => Array.isArray(prev) ? [...prev, slocCode] : [slocCode]);
-                        } else {
-                          setSloc(prev => {
-                            if (Array.isArray(prev)) {
-                              return prev.filter(s => s !== slocCode);
-                            }
-                            return '';
-                          });
-                        }
-                        console.log('🏢 SLOC(s) selected:', sloc);
-                      }}
-                      className="w-3.5 h-3.5 cursor-pointer text-primary-600 rounded focus:ring-primary-500"
-                    />
-                    <span className="font-medium text-gray-700 text-[11px]">{slocCode}</span>
-                  </label>
+
+        <div className="card-body">
+          {/* Show selected SLOCs from filter */}
+          {(filters['SLOC']?.length > 0 || cascadingFilterSelection['SLOC']?.length > 0) && (
+            <div className="mb-4 p-3 bg-primary-50 rounded-lg border border-primary-200">
+              <div className="text-[10px] font-semibold text-primary-700 uppercase mb-1.5">SLOCs to Calculate</div>
+              <div className="flex flex-wrap gap-1.5">
+                {(filters['SLOC'] || cascadingFilterSelection['SLOC'] || []).map(slocCode => (
+                  <span key={slocCode} className="inline-flex items-center bg-primary-500 text-white px-2 py-0.5 rounded-full text-[10px] font-medium">
+                    {slocCode}
+                  </span>
                 ))}
               </div>
-            ) : (
-              <input 
-                type="text"
-                className="input"
-                placeholder="Enter SLOC code (comma-separated for multiple)"
-                value={Array.isArray(sloc) ? sloc.join(', ') : sloc}
-                onChange={e => {
-                  const value = e.target.value;
-                  if (value.includes(',')) {
-                    setSloc(value.split(',').map(s => s.trim()));
-                  } else {
-                    setSloc(value);
-                  }
-                  console.log('🏢 SLOC changed:', sloc);
-                }}
+            </div>
+          )}
+
+          {/* Calculate Button & Auto-save side by side */}
+          <div className="flex items-center gap-3">
+            <button
+              className="btn-primary flex-1"
+              onClick={() => {
+                const selectedSlocs = filters['SLOC'] || cascadingFilterSelection['SLOC'] || [];
+                console.log('🧮 Calculate MSA clicked. SLOCs:', selectedSlocs, 'Threshold:', document.getElementById('msa-threshold')?.value);
+                if (!selectedSlocs || selectedSlocs.length === 0) {
+                  console.warn('⚠️ No SLOC selected in filters');
+                  toast.error('Please select SLOC in filters first');
+                  return;
+                }
+                // Set sloc state and trigger calculation
+                setSloc(selectedSlocs);
+                handleCalculateMSA();
+              }}
+              disabled={loading || (!filters['SLOC']?.length && !cascadingFilterSelection['SLOC']?.length)}
+              type="button"
+            >
+              {loading ? '⏳ Calculating...' : '🧮 Calculate MSA'}
+            </button>
+
+            <label className="flex items-center gap-2 p-3 bg-gray-50 rounded-lg hover:bg-gray-100 cursor-pointer transition-colors border border-gray-200 whitespace-nowrap">
+              <input
+                type="checkbox"
+                checked={autoStoreResults}
+                onChange={(e) => setAutoStoreResults(e.target.checked)}
+                className="w-4 h-4 cursor-pointer"
               />
-            )}
-            {sloc && (
-              <p className="text-[10px] text-emerald-600 mt-1.5">
-                ✅ Selected: {Array.isArray(sloc) ? sloc.join(', ') : sloc}
-              </p>
-            )}
+              <span className="text-[11px] font-medium text-gray-700">
+                Auto-save
+              </span>
+            </label>
           </div>
-
-          {/* Threshold Input */}
-          <div>
-            <label className="label mb-2">Threshold (%) <span className="text-red-500">*</span></label>
-            <input 
-              type="number"
-              id="msa-threshold"
-              className="input"
-              defaultValue={25}
-              min={0}
-              max={100}
-              placeholder="25"
-            />
-          </div>
-
-          <button 
-            className="btn-primary w-full"
-            onClick={() => {
-              const selectedSlocs = Array.isArray(sloc) ? sloc : (sloc ? [sloc] : []);
-              console.log('🧮 Calculate MSA clicked. SLOCs:', selectedSlocs, 'Threshold:', document.getElementById('msa-threshold').value);
-              if (!selectedSlocs || selectedSlocs.length === 0) {
-                console.warn('⚠️ No SLOC selected');
-                toast.error('Please select at least one SLOC code');
-                return;
-              }
-              handleCalculateMSA();
-            }}
-            disabled={loading || !sloc}
-            type="button"
-          >
-            {loading ? '⏳ Calculating...' : '🧮 Calculate MSA'}
-          </button>
         </div>
       </div>
 
@@ -1019,7 +1103,59 @@ export default function MSAStockCalculationPage() {
                 <h2 className="font-semibold text-[13px] text-emerald-900">📊 Calculation Results</h2>
                 <ChevronDown size={16} className={`text-emerald-600 transition-transform ${expandResults ? 'rotate-180' : ''}`} />
               </div>
-              <div className="card-body">
+              <div className="card-body space-y-3">
+                {/* Sequence ID Section */}
+                {sequenceId && (
+                  <div className="p-3 bg-blue-50 rounded-lg border-l-4 border-l-blue-500">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="text-[10px] font-semibold text-blue-700 uppercase">Database Sequence ID</div>
+                        <div className="text-[15px] font-bold text-blue-900 font-mono mt-0.5">#{sequenceId}</div>
+                        <p className="text-[9px] text-blue-600 mt-1">Results stored in database and accessible via API</p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          const link = document.createElement('a');
+                          link.href = `#sequence-${sequenceId}`;
+                          link.textContent = 'View';
+                          console.log(`📂 Sequence ${sequenceId} - View stored data`);
+                          toast.info(`View sequence ${sequenceId} results in the stored sequences list below`);
+                        }}
+                        className="btn-primary btn-sm"
+                      >
+                        📋 View in Database
+                      </button>
+                    </div>
+                  </div>
+                )}
+                
+                {/* Storage Job Status Section */}
+                {storageJob && (
+                  <div className="p-3 bg-amber-50 rounded-lg border-l-4 border-l-amber-500">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="text-[10px] font-semibold text-amber-700 uppercase">Background Data Storage</div>
+                        <div className="text-[13px] font-medium text-amber-900 mt-0.5">
+                          🔄 {storageJob.status === 'queued' ? `Queued (Position: ${storageJob.position_in_queue})` : storageJob.status.toUpperCase()}
+                        </div>
+                        <p className="text-[9px] text-amber-600 mt-1">
+                          {storageJob.total_rows ? `${storageJob.total_rows.toLocaleString()} rows queued for storage` : 'Processing...'}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          console.log(`📋 Checking job status: ${storageJob.job_id}`);
+                          toast.info(`Job ID: ${storageJob.job_id}\nStatus: ${storageJob.status}`);
+                        }}
+                        className="btn-secondary btn-sm"
+                      >
+                        🔍 Job Status
+                      </button>
+                    </div>
+                  </div>
+                )}
+                
+                {/* Results Summary Grid */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   {calculationResults.msa && calculationResults.msa.length > 0 && (
                     <div className="p-3 bg-white rounded-lg border border-emerald-200">
@@ -1066,22 +1202,25 @@ export default function MSAStockCalculationPage() {
               <Download size={14} /> Export All Results as CSV
             </button>
           )}
-          <button 
-            className="btn-success flex-1"
-            onClick={() => {
-              console.log('💾 Save Results clicked. Data:', data);
-              if (!data || (Array.isArray(data) && data.length === 0)) {
-                console.warn('⚠️ No data to save');
-                toast.error('Please calculate MSA first');
-                return;
-              }
-              handleSave();
-            }}
-            disabled={!data || (Array.isArray(data) && data.length === 0)}
-            type="button"
-          >
-            💾 Save Results
-          </button>
+          {/* Conditional Save Button: Only show when auto-save is DISABLED */}
+          {!autoStoreResults && (
+            <button 
+              className="btn-success flex-1"
+              onClick={() => {
+                console.log('💾 Save to Database clicked');
+                if (!calculationResults) {
+                  console.warn('⚠️ No calculation results');
+                  toast.error('Please calculate MSA first');
+                  return;
+                }
+                handleSave();
+              }}
+              disabled={!calculationResults || loading}
+              type="button"
+            >
+              {loading ? '⏳ Saving...' : '💾 Save to Database'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -1102,6 +1241,78 @@ export default function MSAStockCalculationPage() {
           </div>
         </div>
       )}
+
+      {/* Stored Sequences History Section */}
+      <div className="card border-l-4 border-l-purple-500 bg-purple-50/50">
+        <div className="card-header bg-gradient-to-r from-purple-50 to-white flex items-center justify-between cursor-pointer hover:bg-purple-100/30 transition-colors">
+          <h2 className="font-semibold text-[13px] text-purple-900">📦 Stored Calculation Sequences</h2>
+          <button
+            onClick={() => {
+              msaAPI.getStoredSequences(10)
+                .then(res => {
+                  setSequencesList(res.data.data.sequences || []);
+                  console.log('✅ Refreshed sequences list');
+                  toast.success('Sequences list updated');
+                })
+                .catch(err => {
+                  console.error('Error loading sequences:', err);
+                  toast.error('Could not load sequences');
+                });
+            }}
+            className="btn-secondary btn-sm text-[10px] px-2 py-1"
+            title="Refresh stored sequences list"
+          >
+            🔄 Refresh
+          </button>
+        </div>
+        <div className="card-body">
+          {sequencesList && sequencesList.length > 0 ? (
+            <div className="space-y-2 max-h-60 overflow-y-auto">
+              {sequencesList.map((seq, idx) => (
+                <div key={seq.sequence_id || idx} className="p-2 bg-white rounded border border-purple-200 hover:border-purple-400 transition-colors">
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-bold text-purple-700">#{seq.sequence_id}</span>
+                        <span className="text-[10px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">
+                          {new Date(seq.calculation_date).toLocaleString()}
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-gray-600 mt-1">
+                        📊 {seq.msa_row_count} MSA | 🎨 {seq.gen_color_row_count} Colors | 🔸 {seq.color_variant_row_count} Variants
+                      </div>
+                      {seq.created_by && (
+                        <div className="text-[9px] text-gray-500 mt-0.5">By: {seq.created_by}</div>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => {
+                        msaAPI.getSequenceSummary(seq.sequence_id)
+                          .then(res => {
+                            const summary = res.data.data;
+                            console.log('📋 Sequence summary:', summary);
+                            toast.success(`Sequence ${seq.sequence_id}: ${summary.row_counts.msa} MSA | ${summary.row_counts.msa_gen_clr} Colors`, { duration: 4000 });
+                          })
+                          .catch(err => {
+                            console.error('Error loading summary:', err);
+                            toast.error('Could not load sequence summary');
+                          });
+                      }}
+                      className="btn-secondary btn-sm text-[9px] px-1.5 py-0.5 whitespace-nowrap"
+                    >
+                      📋 Details
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="p-4 text-center text-gray-400 text-[11px]">
+              No stored sequences yet. Run a calculation to create a new sequence.
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

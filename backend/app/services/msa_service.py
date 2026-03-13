@@ -72,13 +72,20 @@ class MSAService:
             logger.info(f"Using fallback dates (last 30 days), returned {len(dates)} dates")
             return dates
 
-    def get_distinct_values(self, column: str, date_filter: Optional[str] = None) -> List[str]:
+    def get_distinct_values(
+        self,
+        column: str,
+        date_filter: Optional[str] = None,
+        additional_filters: Optional[Dict[str, List[str]]] = None
+    ) -> List[str]:
         """
-        Get distinct values for a column
+        Get distinct values for a column with cascading support
         
         Args:
             column: Column name
             date_filter: Optional date filter (YYYY-MM-DD)
+            additional_filters: Optional dict for cascading filters
+                               Example: {'ST_CD': ['DH24', 'DH25'], 'SLOC': ['V01']}
             
         Returns:
             List of distinct values (as strings, filtered for non-null/non-nan)
@@ -89,8 +96,35 @@ class MSAService:
                 raise ValueError(f"Invalid column name: {column}")
 
             where_conditions = [f"[{column}] IS NOT NULL"]
+            params = {}
+            param_index = 0
+            
             if date_filter:
-                where_conditions.append(f"CAST([DATE] AS DATE) = '{date_filter}'")
+                where_conditions.append(f"CAST([DATE] AS DATE) = :date_filter")
+                params["date_filter"] = date_filter
+            
+            # Add cascading filters
+            if additional_filters:
+                logger.debug(f"🔗 Adding cascading filters: {additional_filters}")
+                for filter_col, filter_values in additional_filters.items():
+                    if filter_col == column:
+                        continue  # Skip filtering on the same column
+                    
+                    if not self._is_valid_column_name(filter_col):
+                        logger.warning(f"⚠️ Skipping invalid filter column: {filter_col}")
+                        continue
+                    
+                    if filter_values and isinstance(filter_values, list) and len(filter_values) > 0:
+                        placeholders = []
+                        for val in filter_values:
+                            param_key = f"filter_{param_index}"
+                            params[param_key] = val
+                            placeholders.append(f":{param_key}")
+                            param_index += 1
+                        
+                        filter_clause = f"[{filter_col}] IN ({','.join(placeholders)})"
+                        where_conditions.append(filter_clause)
+                        logger.debug(f"✅ Added cascading filter: {filter_col} IN ({','.join(filter_values)})")
             
             where_clause = " AND ".join(where_conditions)
 
@@ -101,8 +135,9 @@ class MSAService:
             ORDER BY [{column}]
             """
             logger.debug(f"🔍 Executing SQL: {sql}")
+            logger.debug(f"📋 With params: {params}")
             
-            df = pd.read_sql(text(sql), self.db.bind)
+            df = pd.read_sql(text(sql), self.db.bind, params=params)
             logger.debug(f"📊 Query returned {len(df)} rows")
             
             if df.empty:
@@ -209,9 +244,9 @@ class MSAService:
             else:
                 logger.warning("⚠️ No where clauses built - will return all data")
 
-            # Load data - limit to 500k rows
+            # Load data - no row limit
             sql = f"""
-            SELECT TOP 500000 *
+            SELECT  *
             FROM {self.main_table}
             {where_sql}
             """
@@ -270,17 +305,30 @@ class MSAService:
         threshold: int = 25
     ) -> Dict[str, Any]:
         """
-        Calculate MSA allocation from filtered data
+        Calculate MSA allocation from filtered data - matches Streamlit logic exactly
+        
+        MSA Logic:
+        1. Filter by SLOC if provided
+        2. Normalize numeric values
+        3. Fill missing dimensions with defaults
+        4. Filter by SEG = ['APP', 'GM']
+        5. Pivot by SLOC to get store-level stock
+        6. Load and merge pending allocations
+        7. Calculate final quantity = Stock - Pending
+        8. Generate color variants based on threshold
+        9. Aggregate to generated colors (hierarchy vs metrics)
         
         Args:
-            df: Filtered DataFrame
+            df: Filtered DataFrame from VW_ET_MSA_STK_WITH_MASTER
             slocs: List of SLOC codes to include (None = all)
-            threshold: Minimum allocation percentage
+            threshold: Minimum color total for inclusion (default 25)
         
         Returns:
             Dict with keys: msa, msa_gen_clr, msa_gen_clr_var, row_counts
         """
         try:
+            logger.info(f"Starting MSA calculation: {len(df)} rows, threshold={threshold}")
+            
             if df.empty:
                 logger.warning("DataFrame is empty, returning empty results")
                 return {
@@ -290,12 +338,18 @@ class MSAService:
                     "row_counts": {"msa": 0, "msa_gen_clr": 0, "msa_gen_clr_var": 0}
                 }
 
-            # Filter by SLOCs if provided
-            if slocs and "SLOC" in df.columns:
-                df = df[df["SLOC"].isin(slocs)]
-                logger.info(f"Filtered to {len(df)} rows for SLOCs: {slocs}")
+            msa = df.copy()
+            msa.to_csv("Z:\\msa\\debug_msa_input.csv", index=False)  # Debug: save input data
+            
+            
 
-            if df.empty:
+            # ============ STEP 1: FILTER SLOCS ============
+            if slocs and "SLOC" in msa.columns:
+                msa = msa[msa["SLOC"].isin(slocs)]
+                logger.info(f"Filtered to {len(msa)} rows for SLOCs: {slocs}")
+
+            if msa.empty:
+                logger.warning("No data after SLOC filtering")
                 return {
                     "msa": [],
                     "msa_gen_clr": [],
@@ -303,11 +357,11 @@ class MSAService:
                     "row_counts": {"msa": 0, "msa_gen_clr": 0, "msa_gen_clr_var": 0}
                 }
 
-            # Convert STK_Q to numeric
-            if "STK_Q" in df.columns:
-                df["STK_Q"] = pd.to_numeric(df["STK_Q"], errors="coerce").fillna(0)
-
-            # Define fill defaults (same as Django)
+            # ============ STEP 2: NUMERIC SAFETY ============
+            if "STK_Q" in msa.columns:
+                msa["STK_Q"] = pd.to_numeric(msa["STK_Q"], errors="coerce").fillna(0)
+            
+            # ============ STEP 3: SAFE DEFAULT FILL (BEFORE PIVOT) ============
             fill_defaults = {
                 "CLR": "A",
                 "M_VND_NM": "NA",
@@ -315,77 +369,190 @@ class MSAService:
                 "MICRO_MVGR": "NA",
                 "FAB": "NA",
                 "MVGR_MATRIX": "NA",
-                "SZ": "A"
+                "SZ": "A",
+                "M_VND_CD": 0,
+                "SSN": "NA",
             }
 
             for col, val in fill_defaults.items():
-                if col in df.columns:
-                    df[col] = (
-                        df[col]
-                        .replace(["", " ", "0", 0], np.nan)
+                if col in msa.columns:
+                    msa[col] = (
+                        msa[col]
+                        .replace(["", " ", "0", "nan", "None"], np.nan)
                         .fillna(val)
                     )
+            
+            # ============ STEP 4: SEG FILTER ============
+            if "SEG" in msa.columns: 
+                seg_filter = ["APP", "GM"]
+                msa = msa[msa["SEG"].isin(seg_filter)]
+                logger.info(f"After SEG filter {seg_filter}: {len(msa)} rows")
+            else:
+                logger.info(f"No SEG filter applied - keeping ALL {msa['SEG'].nunique()} segments")
 
-            # Filter by SEG if column exists
-            if "SEG" in df.columns:
-                df = df[df["SEG"].isin(["APP", "GM"])]
 
-            # Build pivot key (all columns except SLOC and STK_Q)
-            pivot_keys = [c for c in df.columns if c not in ["SLOC", "STK_Q"]]
-
-            # Pivot data
-            try:
-                msa_pivot = (
-                    df.pivot_table(
-                        index=pivot_keys if pivot_keys else ["ARTICLE_NUMBER"],
-                        columns="SLOC" if "SLOC" in df.columns else None,
-                        values="STK_Q",
-                        aggfunc="sum",
-                        fill_value=0,
-                        margins=False
-                    )
-                    .reset_index()
+            # ============ STEP 5: PIVOT MSA BY SLOC ============
+            pivot_keys = [c for c in msa.columns if c not in ["SLOC", "STK_Q"]]
+            
+            msa_pivot = (
+                msa.pivot_table(
+                    index=pivot_keys,
+                    columns="SLOC",
+                    values="STK_Q",
+                    aggfunc="sum",
+                    fill_value=0
                 )
-            except Exception as pivot_err:
-                logger.warning(f"Pivot failed, using groupby fallback: {pivot_err}")
-                msa_pivot = df.copy()
+                .reset_index()
+            )
+            # to be deleted after verification
+            msa_pivot.to_csv("Z:\\msa\\debug_msa_pivot.csv", index=False)  # Debug: save pivoted data
 
-            # Add totals
+            # Calculate total stock across all SLOCs
             sloc_cols = [c for c in msa_pivot.columns if c not in pivot_keys]
-            if sloc_cols:
-                msa_pivot["STK_QTY"] = msa_pivot[sloc_cols].sum(axis=1)
-            else:
-                msa_pivot["STK_QTY"] = msa_pivot.get("STK_Q", 0)
+            msa_pivot["STK_QTY"] = msa_pivot[sloc_cols].sum(axis=1)
+            logger.info(f"Pivoted table: {len(msa_pivot)} rows, {len(sloc_cols)} SLOCs")
 
-            # Handle pending allocations
-            pend_qty = self._get_pending_allocation(msa_pivot)
-            if not pend_qty.empty:
-                msa_pivot = msa_pivot.merge(
-                    pend_qty[["ARTICLE_NUMBER", "PEND_QTY"]],
-                    on="ARTICLE_NUMBER",
-                    how="left"
-                ).fillna(0)
-            else:
+            # ============ STEP 6: LOAD & PIVOT PENDING ALLOCATION ============
+            pend_merged_cols = []
+            try:
+                pend = pd.read_sql(text(f"SELECT * FROM {self.pending_table}"), self.db.bind)
+                print("============================0================================")
+                
+                
+                if (
+                    not pend.empty
+                    and "ARTICLE_NUMBER" in pend.columns
+                    and "ARTICLE_NUMBER" in msa_pivot.columns
+                ):
+                    pend["QTY"] = pd.to_numeric(pend["QTY"], errors="coerce").fillna(0)
+                    
+                    pend_pivot = (
+                        pend.pivot_table(
+                            index=["RDC","ARTICLE_NUMBER"],
+                            columns="MOA",
+                            values="QTY",
+                            aggfunc="sum",
+                            fill_value=0
+                        )
+                        .reset_index()
+                    )
+
+                    
+                    print("============================================================")
+
+
+                    pend_cols = [c for c in pend_pivot.columns if c not in ["RDC","ARTICLE_NUMBER"]]
+                    pend_pivot["PEND_QTY"] = pend_pivot[pend_cols].sum(axis=1)
+                    pend_merged_cols = pend_cols
+                    # to be deleted after verification
+                    pend_pivot.to_csv("Z:\\msa\\debug_pend_pivot.csv", index=False)  # Debug: save pivoted pending data
+                    print("===========================2=================================")
+
+                    msa_pivot = msa_pivot.merge(
+                        pend_pivot,
+                        left_on=["ST_CD","ARTICLE_NUMBER"],
+                        right_on=["RDC", "ARTICLE_NUMBER"],
+                        how="left"
+                    ).fillna(0) 
+                    print(f"Columns merged from pending: {pend_merged_cols}") 
+                    msa_pivot.drop(columns=["RDC"], inplace=True, errors="ignore") 
+                    msa_pivot["PEND_QTY"] = msa_pivot["PEND_QTY"].fillna(0)
+                    logger.info(f"Merged pending allocations: {len(pend_pivot)} records, merged on ARTICLE_NUMBER")
+                    msa_pivot.to_csv("Z:\\msa\\debug_msa_with_pend.csv", index=False)  # Debug: save after merging pending
+                    print("=============================3===============================")
+
+                    logger.info(f"Merged pending allocations")
+                else:
+                    msa_pivot["PEND_QTY"] = 0
+                    logger.info("No pending allocations to merge")
+            except Exception as pend_err:
+                logger.warning(f"Could not load pending allocations: {pend_err}")
                 msa_pivot["PEND_QTY"] = 0
 
-            # Calculate final quantity
-            msa_pivot["FNL_QTY"] = np.maximum(
-                msa_pivot["STK_QTY"] - msa_pivot.get("PEND_QTY", 0),
-                0
+            # ============ STEP 7: CALCULATE FINAL QUANTITY ============
+            msa_pivot["FNL_Q"] = np.maximum(
+                msa_pivot["STK_QTY"] - msa_pivot["PEND_QTY"], 0
             )
 
-            # Filter variants by threshold
-            variants = msa_pivot[msa_pivot["FNL_QTY"] > threshold].copy()
 
-            # Gen colors = variants (generated colors analysis)
-            gen_clr = variants.copy()
+            logger.info(f"Calculated FNL_Q")
 
-            # Convert to dicts and replace NaN with None
+            msa_pivot.to_csv("Z:\\msa\\debug_msa_final.csv", index=False)  # Debug: save final MSA data with FNL_Q
+            
+
+            # ============ STEP 8: GENERATE COLOR VARIANTS (ROW LEVEL) ============
+            grp_cols = ["ST_CD","MAJ_CAT", "GEN_ART_NUMBER", "CLR"]
+            grp_cols = [c for c in grp_cols if c in msa_pivot.columns]
+
+            if grp_cols:
+                msa_gen_clr_var = msa_pivot[
+                    msa_pivot.groupby(grp_cols)["FNL_Q"]
+                    .transform("sum") > threshold
+                ].copy()
+                logger.info(f"Generated color variants: {len(msa_gen_clr_var)} rows (threshold={threshold})")
+            else:
+                msa_gen_clr_var = msa_pivot.copy()
+                logger.warning("Could not determine hierarchy columns, using all rows")
+
+            # ============ STEP 9: GENERATED COLORS (AGGREGATED) ============
+            exclude_from_hierarchy = {
+                "ARTICLE_NUMBER",
+                "ARTICLE_DESC",
+                "SZ"
+            }
+
+            hierarchy_cols = []
+            aggregate_cols = []
+
+            # Identify aggregate columns (SLOC columns + MOA columns + calculated columns)
+            sloc_cols_list = [c for c in msa_pivot.columns
+                if c not in pivot_keys + ["STK_QTY", "PEND_QTY", "FNL_Q", "RDC"]
+                and pd.api.types.is_numeric_dtype(msa_gen_clr_var[c])]
+            moa_cols_list = [c for c in pend_merged_cols
+                if c not in ["ARTICLE_NUMBER", "RDC"]
+                and c in msa_gen_clr_var.columns
+                and pd.api.types.is_numeric_dtype(msa_gen_clr_var[c])]
+            calculated_cols = ["STK_QTY", "PEND_QTY", "FNL_Q"]
+
+            # Classify each column
+            for col in msa_gen_clr_var.columns:
+                if col in exclude_from_hierarchy:
+                    continue
+                
+                if col in sloc_cols_list or col in moa_cols_list or col in calculated_cols:
+                    aggregate_cols.append(col)
+                else:
+                    hierarchy_cols.append(col)
+
+            logger.info(f"🔹 Hierarchy columns ({len(hierarchy_cols)}): {sorted(hierarchy_cols)}")
+            logger.info(f"🔹 Aggregate columns ({len(aggregate_cols)}): {sorted(aggregate_cols)}")
+
+            # Aggregate by hierarchy dimensions
+            if hierarchy_cols and aggregate_cols:
+                agg_map = {c: "sum" for c in aggregate_cols}
+                msa_gen_clr = (
+                    msa_gen_clr_var
+                    .groupby(hierarchy_cols, as_index=False, dropna=False)
+                    .agg(agg_map)
+                    .reset_index(drop=True)
+                )
+                logger.info(f"Generated colors aggregated: {len(msa_gen_clr)} rows")
+            else:
+                msa_gen_clr = pd.DataFrame()
+                logger.warning("Could not aggregate - using empty DataFrame")
+
+            # ============ CONVERT TO DICTS AND RETURN ============
             msa_dict = msa_pivot.where(pd.notna(msa_pivot), None).to_dict("records")
-            gen_clr_dict = gen_clr.where(pd.notna(gen_clr), None).to_dict("records")
-            var_dict = variants.where(pd.notna(variants), None).to_dict("records")
+            pd.DataFrame(msa_dict).to_csv("Z:\\msa\\debug_msa_dict.csv", index=False)  # Debug: save final MSA dict data
+            gen_clr_dict = msa_gen_clr.where(pd.notna(msa_gen_clr), None).to_dict("records") if not msa_gen_clr.empty else []
+            pd.DataFrame(gen_clr_dict).to_csv("Z:\\msa\\debug_msa_gen_clr_dict.csv", index=False)  # Debug: save generated color dict data
+            var_dict = msa_gen_clr_var.where(pd.notna(msa_gen_clr_var), None).to_dict("records")
+            pd.DataFrame(var_dict).to_csv("Z:\\msa\\debug_msa_gen_clr_var_dict.csv", index=False)  # Debug: save color variant dict data
 
-            logger.info(f"MSA calculation complete: {len(msa_dict)} rows, {len(gen_clr_dict)} colors, {len(var_dict)} variants")
+            logger.info(f"✅ MSA calculation complete:")
+            logger.info(f"   MSA: {len(msa_dict)} rows")
+            logger.info(f"   Generated Colors: {len(gen_clr_dict)} rows")
+            logger.info(f"   Color Variants: {len(var_dict)} rows")
 
             return {
                 "msa": msa_dict,
@@ -399,7 +566,7 @@ class MSAService:
             }
 
         except Exception as e:
-            logger.error(f"Error in MSA calculation: {str(e)}")
+            logger.error(f"❌ Error in MSA calculation: {str(e)}", exc_info=True)
             raise
 
     # ========================================================================
