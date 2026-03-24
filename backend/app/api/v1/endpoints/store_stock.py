@@ -1,21 +1,13 @@
 """
 Store Stock - SLOC Settings API
-================================
 Table: ARS_STORE_SLOC_SETTINGS (System DB)
-  id         INT IDENTITY PK
-  sloc       NVARCHAR(50)  UNIQUE NOT NULL
-  kpi        NVARCHAR(200) NULL
-  status     NVARCHAR(20)  NOT NULL DEFAULT 'Active'
-  created_at DATETIME
-  updated_at DATETIME
-
-Source of distinct SLOCs: ET_STORE_STOCK (Data DB)
+  id INT IDENTITY PK | sloc NVARCHAR(50) UNIQUE | kpi NVARCHAR(200) | status NVARCHAR(20) | created_at | updated_at
 """
-
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, validator
 from sqlalchemy import text
+from loguru import logger
 
 from app.database.session import get_data_engine, get_system_engine
 from app.schemas.common import APIResponse
@@ -24,85 +16,90 @@ from app.models.rbac import User
 
 router       = APIRouter(prefix="/store-stock", tags=["Store Stock"])
 TABLE        = "ARS_STORE_SLOC_SETTINGS"
-OLD_TABLE    = "ARS_SLOC_SETTINGS"          # legacy name from previous migration
+OLD_TABLE    = "ARS_SLOC_SETTINGS"
 VALID_STATUS = {"Active", "Inactive"}
 
 
-# ── Schemas ─────────────────────────────────────────────────────────────────
-
+# ── Schemas ──────────────────────────────────────────────────────────────────
 class SlocSetting(BaseModel):
     sloc:   str
     kpi:    Optional[str] = None
     status: str = "Active"
-
     @validator("status")
     def _chk(cls, v):
-        if v not in VALID_STATUS:
-            raise ValueError(f"status must be 'Active' or 'Inactive'")
+        if v not in VALID_STATUS: raise ValueError("status must be Active or Inactive")
         return v
 
 class BulkUpdateItem(BaseModel):
     sloc:   str
     kpi:    Optional[str] = None
     status: str = "Active"
-
     @validator("status")
     def _chk(cls, v):
-        if v not in VALID_STATUS:
-            raise ValueError(f"status must be 'Active' or 'Inactive'")
+        if v not in VALID_STATUS: raise ValueError("status must be Active or Inactive")
         return v
 
 class BulkUpdateRequest(BaseModel):
     items: List[BulkUpdateItem]
 
 
-# ── Auto-migration helpers ───────────────────────────────────────────────────
+# ── DDL helpers (each step in its own batch – SQL Server parse-time safety) ──
+def _run(conn, sql, params=None):
+    """Execute one SQL batch and commit."""
+    if params:
+        conn.execute(text(sql), params)
+    else:
+        conn.execute(text(sql))
+    conn.commit()
 
 def _ensure_table(engine):
     """
-    Run each DDL step as a SEPARATE execute() call so SQL Server does not
-    fail at parse-time on columns that don't exist yet.
+    Auto-create / auto-migrate ARS_STORE_SLOC_SETTINGS.
+    Each ALTER/CREATE is a separate execute() so SQL Server never compiles
+    a batch that references columns which don't exist yet.
     """
-    with engine.connect() as conn:
+    with engine.connect() as c:
 
-        # 1. Rename old table if it exists under the old name
-        conn.execute(text(f"""
+        # ── Step 1: rename old table (nested IF is required – SQL Server has no IF…AND) ──
+        _run(c, f"""
             IF EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME='{OLD_TABLE}')
-            AND NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME='{TABLE}')
-            EXEC sp_rename '{OLD_TABLE}', '{TABLE}'
-        """))
-        conn.commit()
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME='{TABLE}')
+                BEGIN
+                    EXEC sp_rename '{OLD_TABLE}', '{TABLE}'
+                END
+            END
+        """)
 
-        # 2. Create table fresh if it still doesn't exist
-        conn.execute(text(f"""
+        # ── Step 2: create fresh if still missing ────────────────────────────
+        _run(c, f"""
             IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME='{TABLE}')
             BEGIN
                 CREATE TABLE {TABLE} (
                     id         INT IDENTITY(1,1) PRIMARY KEY,
-                    sloc       NVARCHAR(50)  NOT NULL UNIQUE,
+                    sloc       NVARCHAR(50)  NOT NULL,
                     kpi        NVARCHAR(200) NULL,
                     status     NVARCHAR(20)  NOT NULL DEFAULT 'Active',
                     created_at DATETIME      NOT NULL DEFAULT GETDATE(),
-                    updated_at DATETIME      NOT NULL DEFAULT GETDATE()
-                );
-                CREATE INDEX IX_{TABLE}_sloc ON {TABLE}(sloc);
+                    updated_at DATETIME      NOT NULL DEFAULT GETDATE(),
+                    CONSTRAINT UQ_{TABLE}_sloc UNIQUE (sloc)
+                )
             END
-        """))
-        conn.commit()
+        """)
 
-        # 3. Add status column if missing (upgrading from is_active schema)
-        #    Run as its own batch so SQL Server doesn't fail to compile later steps.
-        conn.execute(text(f"""
+        # ── Step 3: add status column if missing (NULL first, set default after) ──
+        _run(c, f"""
             IF NOT EXISTS (
                 SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
                 WHERE TABLE_NAME='{TABLE}' AND COLUMN_NAME='status'
             )
-            ALTER TABLE {TABLE} ADD status NVARCHAR(20) NOT NULL DEFAULT 'Active'
-        """))
-        conn.commit()
+            BEGIN
+                ALTER TABLE {TABLE} ADD status NVARCHAR(20) NULL
+            END
+        """)
 
-        # 4. Migrate old is_active values → status  (separate batch!)
-        conn.execute(text(f"""
+        # ── Step 4: copy is_active→status via dynamic SQL (avoids parse-time error) ──
+        _run(c, f"""
             IF EXISTS (
                 SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
                 WHERE TABLE_NAME='{TABLE}' AND COLUMN_NAME='is_active'
@@ -110,32 +107,39 @@ def _ensure_table(engine):
             BEGIN
                 EXEC('UPDATE {TABLE} SET status = CASE WHEN is_active=1 THEN ''Active'' ELSE ''Inactive'' END')
             END
-        """))
-        conn.commit()
+        """)
 
-        # 5. Drop is_active column if it still exists  (separate batch!)
-        conn.execute(text(f"""
+        # ── Step 5: fill any remaining NULLs in status ───────────────────────
+        _run(c, f"UPDATE {TABLE} SET status='Active' WHERE status IS NULL")
+
+        # ── Step 6: drop legacy is_active column ─────────────────────────────
+        _run(c, f"""
             IF EXISTS (
                 SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
                 WHERE TABLE_NAME='{TABLE}' AND COLUMN_NAME='is_active'
             )
-            ALTER TABLE {TABLE} DROP COLUMN is_active
-        """))
-        conn.commit()
+            BEGIN
+                ALTER TABLE {TABLE} DROP COLUMN is_active
+            END
+        """)
 
 
 def _fetch_distinct_slocs(data_engine) -> List[str]:
-    with data_engine.connect() as conn:
-        rows = conn.execute(text(
-            "SELECT DISTINCT sloc AS qty FROM ET_STORE_STOCK ORDER BY sloc ASC"
-        )).fetchall()
-    return [str(r[0]) for r in rows if r[0] is not None]
+    try:
+        with data_engine.connect() as conn:
+            rows = conn.execute(text(
+                "SELECT DISTINCT sloc FROM ET_STORE_STOCK ORDER BY sloc ASC"
+            )).fetchall()
+        return [str(r[0]) for r in rows if r[0] is not None]
+    except Exception as e:
+        logger.error(f"ET_STORE_STOCK query failed: {e}")
+        raise
 
 
 def _fetch_saved(engine) -> dict:
     with engine.connect() as conn:
         rows = conn.execute(text(
-            f"SELECT id,sloc,kpi,status,created_at,updated_at FROM {TABLE}"
+            f"SELECT id, sloc, kpi, status, created_at, updated_at FROM {TABLE}"
         )).fetchall()
     return {
         str(r[1]): {
@@ -147,28 +151,36 @@ def _fetch_saved(engine) -> dict:
     }
 
 
-# ── Endpoints ────────────────────────────────────────────────────────────────
+# ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.get("/sloc-settings", response_model=APIResponse)
 def get_sloc_settings(current_user: User = Depends(get_current_user)):
     se = get_system_engine()
     de = get_data_engine()
-    _ensure_table(se)
+
+    try:
+        _ensure_table(se)
+    except Exception as e:
+        logger.error(f"_ensure_table failed: {e}")
+        raise HTTPException(500, detail=f"DB schema setup failed: {e}")
 
     try:
         slocs = _fetch_distinct_slocs(de)
     except Exception as e:
         raise HTTPException(500, detail=f"Failed to read ET_STORE_STOCK: {e}")
 
-    saved  = _fetch_saved(se)
+    try:
+        saved = _fetch_saved(se)
+    except Exception as e:
+        raise HTTPException(500, detail=f"Failed to read {TABLE}: {e}")
+
     result = []
     for sloc in slocs:
         if sloc in saved:
-            entry = {**saved[sloc], "is_new": False}
+            result.append({**saved[sloc], "is_new": False})
         else:
-            entry = {"id": None, "sloc": sloc, "kpi": None, "status": "Active",
-                     "created_at": None, "updated_at": None, "is_new": True}
-        result.append(entry)
+            result.append({"id": None, "sloc": sloc, "kpi": None, "status": "Active",
+                           "created_at": None, "updated_at": None, "is_new": True})
 
     new_count = sum(1 for r in result if r["is_new"])
     return APIResponse(success=True,
@@ -178,9 +190,11 @@ def get_sloc_settings(current_user: User = Depends(get_current_user)):
 
 @router.post("/sync", response_model=APIResponse)
 def sync_slocs(current_user: User = Depends(get_current_user)):
-    se = get_system_engine()
-    de = get_data_engine()
-    _ensure_table(se)
+    se = get_system_engine(); de = get_data_engine()
+    try:
+        _ensure_table(se)
+    except Exception as e:
+        raise HTTPException(500, detail=f"DB schema setup failed: {e}")
 
     try:
         slocs = _fetch_distinct_slocs(de)
@@ -192,7 +206,7 @@ def sync_slocs(current_user: User = Depends(get_current_user)):
 
     if new_slocs:
         sql = text(f"""
-            INSERT INTO {TABLE} (sloc,kpi,status,created_at,updated_at)
+            INSERT INTO {TABLE} (sloc, kpi, status, created_at, updated_at)
             VALUES (:sloc, NULL, 'Active', GETDATE(), GETDATE())
         """)
         with se.connect() as conn:
@@ -209,37 +223,37 @@ def sync_slocs(current_user: User = Depends(get_current_user)):
 def update_sloc_setting(sloc: str, payload: SlocSetting,
                         current_user: User = Depends(get_current_user)):
     se = get_system_engine()
-    _ensure_table(se)
-    sql = text(f"""
-        IF EXISTS (SELECT 1 FROM {TABLE} WHERE sloc=:sloc)
-            UPDATE {TABLE} SET kpi=:kpi, status=:status, updated_at=GETDATE() WHERE sloc=:sloc
-        ELSE
-            INSERT INTO {TABLE}(sloc,kpi,status,created_at,updated_at)
-            VALUES(:sloc,:kpi,:status,GETDATE(),GETDATE())
-    """)
+    try: _ensure_table(se)
+    except Exception as e: raise HTTPException(500, detail=str(e))
+
     with se.connect() as conn:
-        conn.execute(sql, {"sloc": sloc, "kpi": payload.kpi, "status": payload.status})
+        conn.execute(text(f"""
+            IF EXISTS (SELECT 1 FROM {TABLE} WHERE sloc=:sloc)
+                UPDATE {TABLE} SET kpi=:kpi, status=:status, updated_at=GETDATE() WHERE sloc=:sloc
+            ELSE
+                INSERT INTO {TABLE}(sloc,kpi,status,created_at,updated_at)
+                VALUES(:sloc,:kpi,:status,GETDATE(),GETDATE())
+        """), {"sloc": sloc, "kpi": payload.kpi, "status": payload.status})
         conn.commit()
     return APIResponse(success=True, message=f"SLOC '{sloc}' updated.",
                        data={"sloc": sloc, "kpi": payload.kpi, "status": payload.status})
 
 
 @router.put("/sloc-settings", response_model=APIResponse)
-def bulk_update(payload: BulkUpdateRequest,
-                current_user: User = Depends(get_current_user)):
+def bulk_update(payload: BulkUpdateRequest, current_user: User = Depends(get_current_user)):
     se = get_system_engine()
-    _ensure_table(se)
-    sql = text(f"""
-        IF EXISTS (SELECT 1 FROM {TABLE} WHERE sloc=:sloc)
-            UPDATE {TABLE} SET kpi=:kpi, status=:status, updated_at=GETDATE() WHERE sloc=:sloc
-        ELSE
-            INSERT INTO {TABLE}(sloc,kpi,status,created_at,updated_at)
-            VALUES(:sloc,:kpi,:status,GETDATE(),GETDATE())
-    """)
+    try: _ensure_table(se)
+    except Exception as e: raise HTTPException(500, detail=str(e))
+
     with se.connect() as conn:
         for item in payload.items:
-            conn.execute(sql, {"sloc": item.sloc, "kpi": item.kpi, "status": item.status})
+            conn.execute(text(f"""
+                IF EXISTS (SELECT 1 FROM {TABLE} WHERE sloc=:sloc)
+                    UPDATE {TABLE} SET kpi=:kpi, status=:status, updated_at=GETDATE() WHERE sloc=:sloc
+                ELSE
+                    INSERT INTO {TABLE}(sloc,kpi,status,created_at,updated_at)
+                    VALUES(:sloc,:kpi,:status,GETDATE(),GETDATE())
+            """), {"sloc": item.sloc, "kpi": item.kpi, "status": item.status})
         conn.commit()
-    return APIResponse(success=True,
-        message=f"{len(payload.items)} SLOC(s) updated.",
-        data={"updated_count": len(payload.items)})
+    return APIResponse(success=True, message=f"{len(payload.items)} SLOC(s) updated.",
+                       data={"updated_count": len(payload.items)})

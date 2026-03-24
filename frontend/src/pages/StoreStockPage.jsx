@@ -1,3 +1,8 @@
+/**
+ * StoreStockPage
+ * Light theme — matches the rest of the ARS app (bg-gray-50 layout).
+ * All text colours are dark so they're readable on white/light cards.
+ */
 import { useState, useEffect, useCallback } from 'react'
 import { storeStockAPI } from '@/services/api'
 import toast from 'react-hot-toast'
@@ -6,48 +11,62 @@ import {
   AlertTriangle, Database, Sparkles
 } from 'lucide-react'
 
-/* ─── colour tokens (always explicit – no Tailwind dark-mode guessing) ────── */
+/* ── Light-theme colour tokens ─────────────────────────────────────────────── */
 const C = {
-  bg:          '#0f172a',
-  card:        '#1e293b',
-  cardBorder:  '#334155',
-  cardHover:   '#263046',
-  rowAlt:      '#172032',
-  text:        '#f1f5f9',   /* primary text  – always white  */
-  textSub:     '#94a3b8',   /* secondary     */
-  textMuted:   '#64748b',   /* muted / placeholder */
-  inputBg:     '#0f172a',
-  inputBorder: '#475569',
+  /* backgrounds */
+  pageBg:      '#f8fafc',   // matches layout bg-gray-50
+  cardBg:      '#ffffff',
+  cardBorder:  '#e2e8f0',
+  headerBg:    '#f8fafc',
+  rowAlt:      '#f8fafc',
+  inputBg:     '#ffffff',
+  inputBorder: '#cbd5e1',
   inputFocus:  '#6366f1',
-  green:       '#34d399',
-  greenBg:     'rgba(52,211,153,0.12)',
-  greenBd:     'rgba(52,211,153,0.35)',
-  red:         '#f87171',
-  redBg:       'rgba(248,113,113,0.12)',
-  redBd:       'rgba(248,113,113,0.35)',
-  amber:       '#fbbf24',
-  amberBg:     'rgba(251,191,36,0.1)',
-  amberBd:     'rgba(251,191,36,0.35)',
-  indigo:      '#818cf8',
-  indigoBg:    'rgba(99,102,241,0.15)',
-  indigoBd:    'rgba(99,102,241,0.4)',
+  statBg:      '#f8fafc',
+
+  /* text — all DARK so always visible on white */
+  text:        '#0f172a',   // slate-900  ← primary text
+  textSub:     '#475569',   // slate-600
+  textMuted:   '#94a3b8',   // slate-400
+  codeColor:   '#1e293b',   // slate-800  (monospace SLOC values)
+
+  /* accents */
   primary:     '#4f46e5',
   primaryHov:  '#4338ca',
+  primaryLight:'#eef2ff',
+  primaryBd:   '#c7d2fe',
+
+  green:       '#059669',
+  greenBg:     '#ecfdf5',
+  greenBd:     '#a7f3d0',
+
+  red:         '#dc2626',
+  redBg:       '#fef2f2',
+  redBd:       '#fecaca',
+
+  amber:       '#d97706',
+  amberBg:     '#fffbeb',
+  amberBd:     '#fde68a',
+
+  indigo:      '#6366f1',
+  indigoBg:    '#eef2ff',
+  indigoBd:    '#c7d2fe',
 }
 
-/* ─── tiny reusable components ──────────────────────────────────────────────── */
+/* ── Reusable components ────────────────────────────────────────────────────── */
+
 const StatusBadge = ({ status }) => (
   <span style={{
     display:'inline-flex', alignItems:'center', gap:4,
     padding:'3px 10px', borderRadius:20, fontSize:11, fontWeight:700,
-    background: status === 'Active' ? C.greenBg : C.redBg,
-    color:      status === 'Active' ? C.green   : C.red,
-    border:     `1px solid ${status === 'Active' ? C.greenBd : C.redBd}`,
-    whiteSpace: 'nowrap',
+    background: status==='Active' ? C.greenBg  : C.redBg,
+    color:      status==='Active' ? C.green    : C.red,
+    border:     `1px solid ${status==='Active' ? C.greenBd : C.redBd}`,
+    whiteSpace:'nowrap',
   }}>
-    {status === 'Active'
-      ? <CheckCircle2 size={10} style={{flexShrink:0}} />
-      : <XCircle      size={10} style={{flexShrink:0}} />}
+    {status==='Active'
+      ? <CheckCircle2 size={10} style={{flexShrink:0}}/>
+      : <XCircle      size={10} style={{flexShrink:0}}/>}
     {status}
   </span>
 )
@@ -66,28 +85,30 @@ const Toggle = ({ active, onClick }) => (
   <button onClick={onClick} style={{
     display:'inline-flex', alignItems:'center', gap:7,
     padding:'5px 12px', borderRadius:8, fontSize:12, fontWeight:700,
-    cursor:'pointer', border:`1px solid ${active ? C.greenBd : C.redBd}`,
+    cursor:'pointer',
+    border:`1px solid ${active ? C.greenBd : C.redBd}`,
     background: active ? C.greenBg : C.redBg,
     color:      active ? C.green   : C.red,
     whiteSpace:'nowrap', transition:'all .15s',
   }}>
-    {/* pill */}
     <span style={{
-      width:32, height:16, borderRadius:8, position:'relative', display:'inline-block',
-      flexShrink:0, transition:'background .2s',
-      background: active ? '#10b981' : '#475569',
+      width:30, height:16, borderRadius:8, position:'relative',
+      display:'inline-block', flexShrink:0, transition:'background .2s',
+      background: active ? '#10b981' : '#e2e8f0',
     }}>
       <span style={{
         position:'absolute', top:2, width:12, height:12, borderRadius:'50%',
-        background:'#fff', boxShadow:'0 1px 4px rgba(0,0,0,.5)',
-        transition:'left .2s', left: active ? 18 : 2,
+        background:'#fff', boxShadow:'0 1px 3px rgba(0,0,0,.3)',
+        transition:'left .2s', left: active ? 16 : 2,
       }}/>
     </span>
-    {active ? 'Active' : 'Inactive'}
+    <span style={{color: active ? C.green : C.red, fontWeight:700, fontSize:12}}>
+      {active ? 'Active' : 'Inactive'}
+    </span>
   </button>
 )
 
-/* ─── main page ──────────────────────────────────────────────────────────── */
+/* ── Main page ───────────────────────────────────────────────────────────── */
 export default function StoreStockPage() {
   const [rows,      setRows]      = useState([])
   const [dirty,     setDirty]     = useState({})
@@ -97,19 +118,16 @@ export default function StoreStockPage() {
   const [search,    setSearch]    = useState('')
   const [filterTab, setFilterTab] = useState('all')
 
-  /* load */
   const loadData = useCallback(async () => {
     setLoading(true)
     try {
       const { data } = await storeStockAPI.getSlocSettings()
       setRows(data.data.items || [])
       setDirty({})
-    } catch {}
-    finally { setLoading(false) }
+    } catch {} finally { setLoading(false) }
   }, [])
   useEffect(() => { loadData() }, [loadData])
 
-  /* sync */
   const handleSync = async () => {
     setSyncing(true)
     try {
@@ -119,7 +137,6 @@ export default function StoreStockPage() {
     } catch {} finally { setSyncing(false) }
   }
 
-  /* field edit */
   const setField = (sloc, field, val) =>
     setDirty(p => ({ ...p, [sloc]: { ...(p[sloc]||{}), [field]: val } }))
 
@@ -131,7 +148,6 @@ export default function StoreStockPage() {
     setField(sloc, 'status', getVal(row,'status') === 'Active' ? 'Inactive' : 'Active')
   }
 
-  /* save */
   const handleSave = async () => {
     const keys = Object.keys(dirty)
     if (!keys.length) { toast('Nothing to save.'); return }
@@ -151,115 +167,132 @@ export default function StoreStockPage() {
     } catch {} finally { setSaving(false) }
   }
 
-  /* filter */
   const visible = rows.filter(r => {
     const q = search.toLowerCase()
     const match = r.sloc.toLowerCase().includes(q) ||
       (getVal(r,'kpi')||'').toLowerCase().includes(q)
     if (!match) return false
     const st = getVal(r,'status')
-    if (filterTab === 'active')   return st === 'Active'
-    if (filterTab === 'inactive') return st === 'Inactive'
-    if (filterTab === 'new')      return r.is_new
+    if (filterTab==='active')   return st==='Active'
+    if (filterTab==='inactive') return st==='Inactive'
+    if (filterTab==='new')      return r.is_new
     return true
   })
 
   const dirtyCount    = Object.keys(dirty).length
   const newCount      = rows.filter(r => r.is_new).length
-  const activeCount   = rows.filter(r => getVal(r,'status') === 'Active').length
-  const inactiveCount = rows.filter(r => getVal(r,'status') === 'Inactive').length
+  const activeCount   = rows.filter(r => getVal(r,'status')==='Active').length
+  const inactiveCount = rows.filter(r => getVal(r,'status')==='Inactive').length
 
-  /* ── render ────────────────────────────────────────────────────────────── */
+  /* ── render ─────────────────────────────────────────────────────────────── */
   return (
-    <div style={{ padding:24, color: C.text, fontFamily:'inherit' }}>
+    <div style={{ color: C.text, fontFamily:'inherit' }}>
 
-      {/* ── Page title ── */}
+      {/* ── Page title (dark text on light bg) ── */}
       <div style={{ marginBottom:20 }}>
-        <h1 style={{ fontSize:20, fontWeight:700, color: C.text, margin:0,
-          display:'flex', alignItems:'center', gap:8 }}>
-          <Database size={20} color={C.indigo} />
+        <h1 style={{
+          fontSize:18, fontWeight:700,
+          color: C.text,         /* ← dark slate-900, always readable */
+          margin:0, display:'flex', alignItems:'center', gap:8,
+        }}>
+          <Database size={20} color={C.primary} />
           Store Stock – SLOC Settings
         </h1>
-        <p style={{ fontSize:13, color: C.textSub, marginTop:5 }}>
-          Configure&nbsp;<strong style={{color:C.text}}>KPI</strong>&nbsp;labels and&nbsp;
-          <strong style={{color:C.text}}>Active / Inactive</strong>&nbsp;status per SLOC.
-          &nbsp;Stored in&nbsp;
-          <code style={{background:'#1e293b',color:C.amber,padding:'1px 6px',borderRadius:4,fontSize:11}}>
+        <p style={{ fontSize:13, color: C.textSub, marginTop:4, margin:'4px 0 0' }}>
+          Configure <strong style={{color:C.text}}>KPI</strong> labels and{' '}
+          <strong style={{color:C.text}}>Active / Inactive</strong> status per SLOC.
+          &nbsp;Table:&nbsp;
+          <code style={{
+            background:'#f1f5f9', color: C.primary,
+            padding:'1px 6px', borderRadius:4, fontSize:11,
+            border:`1px solid ${C.primaryBd}`, fontWeight:600,
+          }}>
             ARS_STORE_SLOC_SETTINGS
           </code>
         </p>
       </div>
 
-      {/* ── Main card wrapper ── */}
+      {/* ── Card wrapper ── */}
       <div style={{
-        background: C.card, border:`1px solid ${C.cardBorder}`,
-        borderRadius:14, overflow:'hidden',
+        background: C.cardBg, border:`1px solid ${C.cardBorder}`,
+        borderRadius:12, overflow:'hidden',
+        boxShadow:'0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.06)',
       }}>
 
-        {/* Card header: action buttons */}
+        {/* Card header */}
         <div style={{
           display:'flex', justifyContent:'space-between', alignItems:'center',
           flexWrap:'wrap', gap:10, padding:'14px 18px',
-          borderBottom:`1px solid ${C.cardBorder}`,
-          background:'rgba(15,23,42,0.5)',
+          background: C.headerBg, borderBottom:`1px solid ${C.cardBorder}`,
         }}>
           <span style={{ fontSize:13, fontWeight:600, color: C.textSub }}>
-            {rows.length} distinct SLOCs from ET_STORE_STOCK
+            {rows.length} distinct SLOC values from{' '}
+            <code style={{ fontSize:11, color: C.primary,
+              background: C.primaryLight, padding:'1px 5px', borderRadius:3 }}>
+              ET_STORE_STOCK
+            </code>
           </span>
+
           <div style={{ display:'flex', gap:8 }}>
+            {/* Sync */}
             <button onClick={handleSync} disabled={syncing||loading} style={{
               display:'flex', alignItems:'center', gap:6,
               padding:'7px 14px', borderRadius:8, fontSize:13, fontWeight:600,
               cursor:'pointer', border:`1px solid ${C.amberBd}`,
               background: C.amberBg, color: C.amber,
-              opacity:(syncing||loading)?.5:1,
+              opacity:(syncing||loading)?0.5:1, transition:'all .15s',
             }}>
-              <RefreshCw size={14} style={{animation:syncing?'spin 1s linear infinite':'none'}}/>
+              <RefreshCw size={13} style={{animation:syncing?'spin 1s linear infinite':'none'}}/>
               Sync New SLOCs
               {newCount > 0 && (
-                <span style={{background:C.amber,color:'#000',borderRadius:99,
-                  padding:'1px 7px',fontSize:10,fontWeight:800}}>{newCount}</span>
+                <span style={{
+                  background:C.amber, color:'#fff', borderRadius:99,
+                  padding:'1px 7px', fontSize:10, fontWeight:800,
+                }}>{newCount}</span>
               )}
             </button>
 
+            {/* Save */}
             <button onClick={handleSave} disabled={saving||dirtyCount===0} style={{
               display:'flex', alignItems:'center', gap:6,
               padding:'7px 16px', borderRadius:8, fontSize:13, fontWeight:600,
               cursor: dirtyCount>0 ? 'pointer' : 'not-allowed',
               border:'none',
-              background: dirtyCount>0 ? C.primary : '#2d3748',
+              background: dirtyCount>0 ? C.primary : '#e2e8f0',
               color:      dirtyCount>0 ? '#fff'    : C.textMuted,
-              opacity: saving ? .6 : 1,
-              boxShadow: dirtyCount>0 ? '0 0 14px rgba(79,70,229,.35)' : 'none',
+              opacity: saving ? 0.6 : 1,
+              boxShadow: dirtyCount>0 ? '0 0 12px rgba(79,70,229,.3)' : 'none',
               transition:'all .15s',
             }}>
-              <Save size={14}/>
+              <Save size={13}/>
               Save Changes
               {dirtyCount > 0 && (
-                <span style={{background:'#fff',color:C.primary,borderRadius:99,
-                  padding:'1px 7px',fontSize:10,fontWeight:800}}>{dirtyCount}</span>
+                <span style={{
+                  background:'rgba(255,255,255,.25)', color:'#fff',
+                  borderRadius:99, padding:'1px 7px', fontSize:10, fontWeight:800,
+                }}>{dirtyCount}</span>
               )}
             </button>
           </div>
         </div>
 
-        {/* Stats row */}
+        {/* Stats strip */}
         <div style={{
           display:'grid', gridTemplateColumns:'repeat(4,1fr)',
           borderBottom:`1px solid ${C.cardBorder}`,
         }}>
           {[
-            { label:'Total SLOCs',   value:rows.length,   color:C.text  },
-            { label:'Active',        value:activeCount,   color:C.green },
-            { label:'Inactive',      value:inactiveCount, color:C.red   },
-            { label:'Unsaved Edits', value:dirtyCount,    color:C.amber },
+            { label:'Total SLOCs',   value:rows.length,   color:C.text,   bg:'#f8fafc' },
+            { label:'Active',        value:activeCount,   color:C.green,  bg:C.greenBg },
+            { label:'Inactive',      value:inactiveCount, color:C.red,    bg:C.redBg   },
+            { label:'Unsaved Edits', value:dirtyCount,    color:C.amber,  bg:C.amberBg },
           ].map((s,i) => (
             <div key={s.label} style={{
-              padding:'12px 18px',
+              padding:'12px 18px', background:s.bg,
               borderRight: i<3 ? `1px solid ${C.cardBorder}` : 'none',
             }}>
-              <div style={{fontSize:24,fontWeight:800,color:s.color,lineHeight:1}}>{s.value}</div>
-              <div style={{fontSize:11,color:C.textSub,marginTop:3}}>{s.label}</div>
+              <div style={{ fontSize:26, fontWeight:800, color:s.color, lineHeight:1 }}>{s.value}</div>
+              <div style={{ fontSize:11, color:C.textSub, marginTop:3, fontWeight:500 }}>{s.label}</div>
             </div>
           ))}
         </div>
@@ -268,31 +301,34 @@ export default function StoreStockPage() {
         <div style={{
           display:'flex', gap:10, flexWrap:'wrap', alignItems:'center',
           padding:'12px 18px', borderBottom:`1px solid ${C.cardBorder}`,
-          background:'rgba(15,23,42,.3)',
+          background: C.headerBg,
         }}>
           <div style={{ position:'relative', flex:1, minWidth:200 }}>
-            <Search size={13} style={{position:'absolute',left:10,top:'50%',transform:'translateY(-50%)',color:C.textMuted}}/>
+            <Search size={13} style={{
+              position:'absolute', left:10, top:'50%', transform:'translateY(-50%)',
+              color: C.textMuted,
+            }}/>
             <input
               type="text" value={search} placeholder="Search SLOC or KPI…"
               onChange={e => setSearch(e.target.value)}
               style={{
                 width:'100%', padding:'7px 10px 7px 30px', borderRadius:7,
                 background: C.inputBg, border:`1px solid ${C.inputBorder}`,
-                color: C.text,           /* ← always white */
+                color: C.text,            /* ← dark text, always readable */
                 fontSize:13, outline:'none', boxSizing:'border-box',
               }}
             />
           </div>
 
           <div style={{
-            display:'flex', background:C.inputBg,
+            display:'flex', background:'#fff',
             border:`1px solid ${C.cardBorder}`, borderRadius:7, padding:3, gap:2,
           }}>
             {[
-              { key:'all',      label:'All'                                          },
-              { key:'active',   label:'Active'                                       },
-              { key:'inactive', label:'Inactive'                                     },
-              { key:'new',      label: newCount>0 ? `New (${newCount})` : 'New'     },
+              { key:'all',      label:'All'                                     },
+              { key:'active',   label:'Active'                                  },
+              { key:'inactive', label:'Inactive'                                },
+              { key:'new',      label:newCount>0 ? `New (${newCount})` : 'New' },
             ].map(f => (
               <button key={f.key} onClick={() => setFilterTab(f.key)} style={{
                 padding:'4px 12px', borderRadius:5, fontSize:12, fontWeight:600,
@@ -310,12 +346,12 @@ export default function StoreStockPage() {
         {newCount > 0 && (
           <div style={{
             display:'flex', alignItems:'center', gap:10,
-            padding:'10px 18px', background: C.amberBg,
+            padding:'10px 18px', background:C.amberBg,
             borderBottom:`1px solid ${C.amberBd}`,
             fontSize:13, color: C.amber,
           }}>
             <AlertTriangle size={14} style={{flexShrink:0}}/>
-            <span>
+            <span style={{color:C.amber}}>
               <strong>{newCount} new SLOC{newCount>1?'s':''}</strong> found in ET_STORE_STOCK but not yet saved.
               Click <strong>Sync New SLOCs</strong> to persist them with default settings.
             </span>
@@ -326,55 +362,63 @@ export default function StoreStockPage() {
         <div style={{ overflowX:'auto' }}>
           <table style={{ width:'100%', borderCollapse:'collapse', fontSize:13, minWidth:640 }}>
             <thead>
-              <tr style={{ background:'rgba(15,23,42,.6)', borderBottom:`2px solid ${C.cardBorder}` }}>
-                <th style={{ padding:'10px 18px', textAlign:'left', fontSize:11, fontWeight:700,
-                  color: C.textSub, textTransform:'uppercase', letterSpacing:'.07em', width:170 }}>
-                  SLOC
-                </th>
-                <th style={{ padding:'10px 18px', textAlign:'left', fontSize:11, fontWeight:700,
-                  color: C.textSub, textTransform:'uppercase', letterSpacing:'.07em' }}>
-                  KPI
-                </th>
-                <th style={{ padding:'10px 18px', textAlign:'center', fontSize:11, fontWeight:700,
-                  color: C.textSub, textTransform:'uppercase', letterSpacing:'.07em', width:180 }}>
-                  Active / Inactive
-                </th>
-                <th style={{ padding:'10px 18px', textAlign:'center', fontSize:11, fontWeight:700,
-                  color: C.textSub, textTransform:'uppercase', letterSpacing:'.07em', width:110 }}>
-                  Status
-                </th>
+              <tr style={{
+                background:'#f1f5f9',
+                borderBottom:`2px solid ${C.cardBorder}`,
+              }}>
+                {[
+                  { label:'SLOC',              align:'left',   width:170 },
+                  { label:'KPI',               align:'left',   width:null },
+                  { label:'ACTIVE / INACTIVE', align:'center', width:190 },
+                  { label:'STATUS',            align:'center', width:120 },
+                ].map(h => (
+                  <th key={h.label} style={{
+                    padding:'10px 18px', textAlign:h.align,
+                    fontSize:11, fontWeight:700,
+                    color: C.textSub,        /* ← readable header labels */
+                    textTransform:'uppercase', letterSpacing:'.06em',
+                    width: h.width||undefined,
+                  }}>
+                    {h.label}
+                  </th>
+                ))}
               </tr>
             </thead>
 
             <tbody>
               {loading ? (
                 <tr><td colSpan={4} style={{textAlign:'center',padding:60,color:C.textMuted}}>
-                  <RefreshCw size={18} style={{display:'block',margin:'0 auto 8px',animation:'spin 1s linear infinite'}}/>
+                  <RefreshCw size={18} style={{
+                    display:'block', margin:'0 auto 8px',
+                    animation:'spin 1s linear infinite',
+                  }}/>
                   Loading SLOC data…
                 </td></tr>
-              ) : visible.length === 0 ? (
+              ) : visible.length===0 ? (
                 <tr><td colSpan={4} style={{textAlign:'center',padding:60,color:C.textMuted}}>
                   No SLOC records found.
                 </td></tr>
               ) : visible.map((row, idx) => {
-                const isDirty  = !!dirty[row.sloc]
-                const kpiVal   = getVal(row,'kpi') ?? ''
+                const isDirty   = !!dirty[row.sloc]
+                const kpiVal    = getVal(row,'kpi') ?? ''
                 const statusVal = getVal(row,'status') ?? 'Active'
+                const isActive  = statusVal==='Active'
 
                 return (
                   <tr key={row.sloc} style={{
-                    borderBottom: `1px solid ${C.cardBorder}`,
-                    background: isDirty ? 'rgba(79,70,229,.09)'
-                      : idx%2===0 ? 'transparent' : C.rowAlt,
+                    borderBottom:`1px solid ${C.cardBorder}`,
+                    background: isDirty
+                      ? C.indigoBg
+                      : idx%2===0 ? C.cardBg : C.rowAlt,
                     transition:'background .12s',
                   }}>
 
                     {/* SLOC */}
                     <td style={{ padding:'9px 18px' }}>
-                      <div style={{display:'flex',alignItems:'center',gap:7}}>
+                      <div style={{ display:'flex', alignItems:'center', gap:7 }}>
                         <code style={{
-                          fontFamily:'Consolas,monospace', fontSize:13,
-                          fontWeight:700, color: C.text,   /* always visible */
+                          fontFamily:'Consolas,monospace', fontSize:13, fontWeight:700,
+                          color: C.codeColor,    /* ← dark, always visible */
                           letterSpacing:'.04em',
                         }}>
                           {row.sloc}
@@ -382,8 +426,8 @@ export default function StoreStockPage() {
                         {row.is_new && <NewBadge/>}
                         {isDirty && (
                           <span title="Unsaved change" style={{
-                            width:6,height:6,borderRadius:'50%',
-                            background:C.indigo,flexShrink:0,
+                            width:6, height:6, borderRadius:'50%',
+                            background:C.primary, flexShrink:0,
                           }}/>
                         )}
                       </div>
@@ -397,28 +441,23 @@ export default function StoreStockPage() {
                         onChange={e => setField(row.sloc,'kpi',e.target.value)}
                         placeholder="Enter KPI label…"
                         style={{
-                          width:'100%', padding:'6px 11px', borderRadius:6,
-                          fontSize:13,
-                          background: isDirty && dirty[row.sloc]?.kpi !== undefined
-                            ? 'rgba(79,70,229,.12)' : C.inputBg,
+                          width:'100%', padding:'6px 11px', borderRadius:6, fontSize:13,
+                          background: isDirty && dirty[row.sloc]?.kpi!==undefined
+                            ? C.indigoBg : C.inputBg,
                           border: `1px solid ${
-                            isDirty && dirty[row.sloc]?.kpi !== undefined
-                              ? C.indigoBd : C.inputBorder
+                            isDirty && dirty[row.sloc]?.kpi!==undefined
+                              ? C.primary : C.inputBorder
                           }`,
-                          color: C.text,               /* ← ALWAYS WHITE */
-                          caretColor: C.indigo,
-                          outline:'none', boxSizing:'border-box',
-                          fontFamily:'inherit',
+                          color: C.text,     /* ← always dark, always readable */
+                          caretColor: C.primary,
+                          outline:'none', boxSizing:'border-box', fontFamily:'inherit',
                         }}
                       />
                     </td>
 
                     {/* Toggle */}
                     <td style={{ padding:'7px 18px', textAlign:'center' }}>
-                      <Toggle
-                        active={statusVal === 'Active'}
-                        onClick={() => toggleStatus(row.sloc)}
-                      />
+                      <Toggle active={isActive} onClick={() => toggleStatus(row.sloc)}/>
                     </td>
 
                     {/* Status badge */}
@@ -436,15 +475,15 @@ export default function StoreStockPage() {
         {!loading && rows.length > 0 && (
           <div style={{
             padding:'9px 18px', borderTop:`1px solid ${C.cardBorder}`,
-            background:'rgba(15,23,42,.5)', fontSize:12,
+            background: C.headerBg, fontSize:12,
             display:'flex', justifyContent:'space-between', alignItems:'center',
           }}>
-            <span style={{color:C.textMuted}}>
-              Showing <strong style={{color:C.textSub}}>{visible.length}</strong> of{' '}
-              <strong style={{color:C.textSub}}>{rows.length}</strong> records
+            <span style={{color:C.textSub}}>
+              Showing <strong style={{color:C.text}}>{visible.length}</strong> of{' '}
+              <strong style={{color:C.text}}>{rows.length}</strong> records
             </span>
             {dirtyCount > 0 && (
-              <span style={{color:C.amber,fontWeight:600}}>
+              <span style={{color:C.amber, fontWeight:600}}>
                 ● {dirtyCount} unsaved change{dirtyCount>1?'s':''} — click Save Changes
               </span>
             )}
