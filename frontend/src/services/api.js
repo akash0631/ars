@@ -268,11 +268,12 @@ export const contributionAPI = {
 }
 
 // ============== Store Stock (Data Preparation) ==============
+// DB columns: kpi (NVARCHAR) and status ('Active' | 'Inactive')
 export const storeStockAPI = {
-  getSlocSettings: () => api.get('/store-stock/sloc-settings'),
-  syncSlocs:       () => api.post('/store-stock/sync'),
+  getSlocSettings: ()           => api.get('/store-stock/sloc-settings'),
+  syncSlocs:       ()           => api.post('/store-stock/sync'),
   updateSloc:      (sloc, data) => api.put(`/store-stock/sloc-settings/${encodeURIComponent(sloc)}`, data),
-  bulkUpdate:      (items) => api.put('/store-stock/sloc-settings', { items }),
+  bulkUpdate:      (items)      => api.put('/store-stock/sloc-settings', { items }),
 }
 
 export default api

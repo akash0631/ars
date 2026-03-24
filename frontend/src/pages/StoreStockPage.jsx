@@ -1,380 +1,373 @@
 import { useState, useEffect, useCallback } from 'react'
 import { storeStockAPI } from '@/services/api'
 import toast from 'react-hot-toast'
-import {
-  RefreshCw, Save, Search, CheckCircle2, XCircle,
-  AlertTriangle, Database, Sparkles, Filter
-} from 'lucide-react'
+import { RefreshCw, Save, Search, CheckCircle2, XCircle, AlertTriangle, Database, Sparkles } from 'lucide-react'
 import clsx from 'clsx'
 
-// ─── tiny helpers ────────────────────────────────────────────────────────────
-
-const Badge = ({ active }) =>
-  active ? (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+/* ── Status badge ─────────────────────────────────────────────────────────── */
+const StatusBadge = ({ status }) =>
+  status === 'Active' ? (
+    <span style={{ display:'inline-flex', alignItems:'center', gap:4,
+      padding:'2px 10px', borderRadius:999, fontSize:11, fontWeight:700,
+      background:'rgba(16,185,129,0.18)', color:'#34d399', border:'1px solid rgba(52,211,153,0.4)' }}>
       <CheckCircle2 size={10} /> Active
     </span>
   ) : (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-500/15 text-rose-400 border border-rose-500/30">
+    <span style={{ display:'inline-flex', alignItems:'center', gap:4,
+      padding:'2px 10px', borderRadius:999, fontSize:11, fontWeight:700,
+      background:'rgba(239,68,68,0.18)', color:'#f87171', border:'1px solid rgba(248,113,113,0.4)' }}>
       <XCircle size={10} /> Inactive
     </span>
   )
 
 const NewBadge = () => (
-  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/30">
-    <Sparkles size={10} /> New
+  <span style={{ display:'inline-flex', alignItems:'center', gap:3,
+    padding:'1px 7px', borderRadius:999, fontSize:10, fontWeight:700,
+    background:'rgba(245,158,11,0.18)', color:'#fbbf24', border:'1px solid rgba(251,191,36,0.4)' }}>
+    <Sparkles size={9} /> New
   </span>
 )
 
-// ─── main component ───────────────────────────────────────────────────────────
-
+/* ── Main page ───────────────────────────────────────────────────────────── */
 export default function StoreStockPage() {
-  const [rows, setRows]           = useState([])       // merged data (distinct slocs + saved settings)
-  const [dirty, setDirty]         = useState({})       // { [sloc]: {kpi, is_active} } – unsaved edits
-  const [loading, setLoading]     = useState(false)
-  const [syncing, setSyncing]     = useState(false)
-  const [saving, setSaving]       = useState(false)
-  const [search, setSearch]       = useState('')
-  const [filterStatus, setFilter] = useState('all')   // 'all' | 'active' | 'inactive' | 'new'
+  const [rows,        setRows]        = useState([])
+  const [dirty,       setDirty]       = useState({})   // { sloc: { kpi?, status? } }
+  const [loading,     setLoading]     = useState(false)
+  const [syncing,     setSyncing]     = useState(false)
+  const [saving,      setSaving]      = useState(false)
+  const [search,      setSearch]      = useState('')
+  const [filterTab,   setFilterTab]   = useState('all')
 
-  // ── load data ────────────────────────────────────────────────────────────
+  /* ── load ────────────────────────────────────────────────────────────── */
   const loadData = useCallback(async () => {
     setLoading(true)
     try {
       const { data } = await storeStockAPI.getSlocSettings()
       setRows(data.data.items || [])
       setDirty({})
-    } catch {
-      /* toast already shown by interceptor */
-    } finally {
-      setLoading(false)
-    }
+    } catch { /* interceptor shows toast */ }
+    finally { setLoading(false) }
   }, [])
 
   useEffect(() => { loadData() }, [loadData])
 
-  // ── sync new SLOCs ────────────────────────────────────────────────────────
+  /* ── sync ────────────────────────────────────────────────────────────── */
   const handleSync = async () => {
     setSyncing(true)
     try {
       const { data } = await storeStockAPI.syncSlocs()
       toast.success(data.message)
       await loadData()
-    } catch {
-      /* handled */
-    } finally {
-      setSyncing(false)
-    }
+    } catch { } finally { setSyncing(false) }
   }
 
-  // ── local cell edit ───────────────────────────────────────────────────────
-  const handleEdit = (sloc, field, value) => {
-    setDirty(prev => ({
-      ...prev,
-      [sloc]: { ...(prev[sloc] || {}), [field]: value },
-    }))
-  }
+  /* ── edit helpers ────────────────────────────────────────────────────── */
+  const setField = (sloc, field, val) =>
+    setDirty(prev => ({ ...prev, [sloc]: { ...(prev[sloc] || {}), [field]: val } }))
 
-  // ── get current value (dirty-first) ──────────────────────────────────────
   const getVal = (row, field) =>
-    dirty[row.sloc] !== undefined && dirty[row.sloc][field] !== undefined
-      ? dirty[row.sloc][field]
-      : row[field]
+    dirty[row.sloc]?.[field] !== undefined ? dirty[row.sloc][field] : row[field]
 
-  // ── save all dirty rows ───────────────────────────────────────────────────
-  const handleSaveAll = async () => {
-    const dirtySlocs = Object.keys(dirty)
-    if (dirtySlocs.length === 0) {
-      toast('Nothing to save.')
-      return
-    }
+  const toggleStatus = (sloc) => {
+    const row = rows.find(r => r.sloc === sloc)
+    const cur = getVal(row, 'status')
+    setField(sloc, 'status', cur === 'Active' ? 'Inactive' : 'Active')
+  }
+
+  /* ── save ────────────────────────────────────────────────────────────── */
+  const handleSave = async () => {
+    const keys = Object.keys(dirty)
+    if (!keys.length) { toast('Nothing to save.'); return }
     setSaving(true)
     try {
-      const items = dirtySlocs.map(sloc => {
+      const items = keys.map(sloc => {
         const base = rows.find(r => r.sloc === sloc) || {}
         return {
           sloc,
-          kpi:       dirty[sloc].kpi       !== undefined ? dirty[sloc].kpi       : base.kpi,
-          is_active: dirty[sloc].is_active !== undefined ? dirty[sloc].is_active : base.is_active,
+          kpi:    dirty[sloc]?.kpi    !== undefined ? dirty[sloc].kpi    : base.kpi,
+          status: dirty[sloc]?.status !== undefined ? dirty[sloc].status : base.status,
         }
       })
       const { data } = await storeStockAPI.bulkUpdate(items)
       toast.success(data.message)
       await loadData()
-    } catch {
-      /* handled */
-    } finally {
-      setSaving(false)
-    }
+    } catch { } finally { setSaving(false) }
   }
 
-  // ── toggle single row active flag ─────────────────────────────────────────
-  const toggleActive = (sloc) => {
-    const cur = getVal(rows.find(r => r.sloc === sloc), 'is_active')
-    handleEdit(sloc, 'is_active', !cur)
-  }
-
-  // ── filter + search ───────────────────────────────────────────────────────
+  /* ── filter ──────────────────────────────────────────────────────────── */
   const visible = rows.filter(r => {
-    const matchSearch = r.sloc.toLowerCase().includes(search.toLowerCase()) ||
-      (getVal(r, 'kpi') || '').toLowerCase().includes(search.toLowerCase())
-    if (!matchSearch) return false
-    if (filterStatus === 'active')   return getVal(r, 'is_active') === true
-    if (filterStatus === 'inactive') return getVal(r, 'is_active') === false
-    if (filterStatus === 'new')      return r.is_new
+    const q = search.toLowerCase()
+    const match = r.sloc.toLowerCase().includes(q) ||
+      (getVal(r,'kpi') || '').toLowerCase().includes(q)
+    if (!match) return false
+    if (filterTab === 'active')   return getVal(r,'status') === 'Active'
+    if (filterTab === 'inactive') return getVal(r,'status') === 'Inactive'
+    if (filterTab === 'new')      return r.is_new
     return true
   })
 
   const dirtyCount = Object.keys(dirty).length
   const newCount   = rows.filter(r => r.is_new).length
+  const activeCount   = rows.filter(r => getVal(r,'status') === 'Active').length
+  const inactiveCount = rows.filter(r => getVal(r,'status') === 'Inactive').length
 
+  /* ── render ──────────────────────────────────────────────────────────── */
   return (
-    <div className="p-6 space-y-5">
-      {/* ── Header ── */}
-      <div className="flex items-start justify-between flex-wrap gap-3">
+    <div style={{ padding:24, display:'flex', flexDirection:'column', gap:20, color:'#f1f5f9' }}>
+
+      {/* Header */}
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', flexWrap:'wrap', gap:12 }}>
         <div>
-          <h1 className="text-xl font-bold text-white flex items-center gap-2">
-            <Database size={20} className="text-primary-400" />
+          <h1 style={{ fontSize:20, fontWeight:700, color:'#f8fafc', display:'flex', alignItems:'center', gap:8, margin:0 }}>
+            <Database size={20} color="#818cf8" />
             Store Stock – SLOC Settings
           </h1>
-          <p className="text-sm text-gray-400 mt-0.5">
-            Manage KPI labels and Active / Inactive status for each distinct SLOC in&nbsp;
-            <code className="text-xs bg-gray-800 px-1 py-0.5 rounded text-amber-300">ET_STORE_STOCK</code>
+          <p style={{ fontSize:13, color:'#94a3b8', marginTop:4 }}>
+            Manage <strong style={{color:'#e2e8f0'}}>KPI</strong> labels and&nbsp;
+            <strong style={{color:'#e2e8f0'}}>Active / Inactive</strong> status saved in&nbsp;
+            <code style={{ background:'#1e293b', color:'#fbbf24', padding:'1px 6px', borderRadius:4, fontSize:12 }}>
+              ARS_SLOC_SETTINGS
+            </code>
+            &nbsp;for each distinct SLOC from&nbsp;
+            <code style={{ background:'#1e293b', color:'#fbbf24', padding:'1px 6px', borderRadius:4, fontSize:12 }}>
+              ET_STORE_STOCK
+            </code>
           </p>
         </div>
 
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* Sync */}
-          <button
-            onClick={handleSync}
-            disabled={syncing || loading}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-amber-600/20 text-amber-400 border border-amber-600/30 hover:bg-amber-600/30 disabled:opacity-50 transition-colors"
-          >
-            <RefreshCw size={14} className={syncing ? 'animate-spin' : ''} />
+        <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+          {/* Sync button */}
+          <button onClick={handleSync} disabled={syncing || loading}
+            style={{ display:'flex', alignItems:'center', gap:6, padding:'7px 14px', borderRadius:8,
+              fontSize:13, fontWeight:600, cursor:'pointer', border:'1px solid rgba(245,158,11,0.4)',
+              background:'rgba(245,158,11,0.1)', color:'#fbbf24',
+              opacity: (syncing||loading) ? 0.5 : 1 }}>
+            <RefreshCw size={14} style={{ animation: syncing ? 'spin 1s linear infinite' : 'none' }} />
             Sync New SLOCs
             {newCount > 0 && (
-              <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500 text-black">
-                {newCount}
-              </span>
+              <span style={{ background:'#f59e0b', color:'#000', borderRadius:999,
+                padding:'1px 7px', fontSize:10, fontWeight:800 }}>{newCount}</span>
             )}
           </button>
 
-          {/* Save */}
-          <button
-            onClick={handleSaveAll}
-            disabled={saving || dirtyCount === 0}
-            className={clsx(
-              'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors',
-              dirtyCount > 0
-                ? 'bg-primary-600 hover:bg-primary-500 text-white shadow-lg shadow-primary-600/30'
-                : 'bg-gray-700 text-gray-400 cursor-not-allowed'
-            )}
-          >
+          {/* Save button */}
+          <button onClick={handleSave} disabled={saving || dirtyCount === 0}
+            style={{ display:'flex', alignItems:'center', gap:6, padding:'7px 14px', borderRadius:8,
+              fontSize:13, fontWeight:600, cursor: dirtyCount > 0 ? 'pointer' : 'not-allowed',
+              border:'none',
+              background: dirtyCount > 0 ? '#4f46e5' : '#334155',
+              color: dirtyCount > 0 ? '#fff' : '#64748b',
+              opacity: saving ? 0.6 : 1,
+              boxShadow: dirtyCount > 0 ? '0 0 16px rgba(79,70,229,0.4)' : 'none' }}>
             <Save size={14} />
             Save Changes
             {dirtyCount > 0 && (
-              <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-white text-primary-700">
-                {dirtyCount}
-              </span>
+              <span style={{ background:'#fff', color:'#4f46e5', borderRadius:999,
+                padding:'1px 7px', fontSize:10, fontWeight:800 }}>{dirtyCount}</span>
             )}
           </button>
         </div>
       </div>
 
-      {/* ── Stats strip ── */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      {/* Stats */}
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:12 }}>
         {[
-          { label: 'Total SLOCs',  value: rows.length,                          color: 'text-white' },
-          { label: 'Active',       value: rows.filter(r => getVal(r,'is_active')).length,  color: 'text-emerald-400' },
-          { label: 'Inactive',     value: rows.filter(r => !getVal(r,'is_active')).length, color: 'text-rose-400' },
-          { label: 'Unsaved Edits',value: dirtyCount,                            color: 'text-amber-400' },
+          { label:'Total SLOCs',   value: rows.length,   color:'#f8fafc' },
+          { label:'Active',        value: activeCount,   color:'#34d399' },
+          { label:'Inactive',      value: inactiveCount, color:'#f87171' },
+          { label:'Unsaved Edits', value: dirtyCount,    color:'#fbbf24' },
         ].map(s => (
-          <div key={s.label} className="bg-gray-800/60 border border-gray-700/50 rounded-xl px-4 py-3">
-            <div className={`text-2xl font-bold ${s.color}`}>{s.value}</div>
-            <div className="text-xs text-gray-400 mt-0.5">{s.label}</div>
+          <div key={s.label} style={{ background:'rgba(30,41,59,0.8)', border:'1px solid #334155',
+            borderRadius:12, padding:'12px 16px' }}>
+            <div style={{ fontSize:26, fontWeight:800, color: s.color, lineHeight:1 }}>{s.value}</div>
+            <div style={{ fontSize:11, color:'#94a3b8', marginTop:4 }}>{s.label}</div>
           </div>
         ))}
       </div>
 
-      {/* ── Filters ── */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-          <input
-            type="text"
-            placeholder="Search SLOC or KPI…"
-            value={search}
+      {/* Search + filter tabs */}
+      <div style={{ display:'flex', gap:10, flexWrap:'wrap', alignItems:'center' }}>
+        <div style={{ position:'relative', flex:1, minWidth:220 }}>
+          <Search size={14} style={{ position:'absolute', left:10, top:'50%', transform:'translateY(-50%)', color:'#64748b' }} />
+          <input type="text" placeholder="Search SLOC or KPI…" value={search}
             onChange={e => setSearch(e.target.value)}
-            className="w-full pl-8 pr-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-primary-500"
-          />
+            style={{ width:'100%', padding:'8px 12px 8px 32px', background:'#1e293b',
+              border:'1px solid #334155', borderRadius:8, color:'#f1f5f9', fontSize:13,
+              outline:'none', boxSizing:'border-box' }} />
         </div>
 
-        <div className="flex items-center gap-1 bg-gray-800 border border-gray-700 rounded-lg p-1">
+        <div style={{ display:'flex', background:'#1e293b', border:'1px solid #334155', borderRadius:8, padding:4, gap:2 }}>
           {[
-            { key: 'all',      label: 'All' },
-            { key: 'active',   label: 'Active' },
-            { key: 'inactive', label: 'Inactive' },
-            { key: 'new',      label: `New${newCount > 0 ? ` (${newCount})` : ''}` },
+            { key:'all',      label:'All' },
+            { key:'active',   label:'Active' },
+            { key:'inactive', label:'Inactive' },
+            { key:'new',      label: newCount > 0 ? `New (${newCount})` : 'New' },
           ].map(f => (
-            <button
-              key={f.key}
-              onClick={() => setFilter(f.key)}
-              className={clsx(
-                'px-3 py-1 rounded-md text-xs font-medium transition-colors',
-                filterStatus === f.key
-                  ? 'bg-primary-600 text-white'
-                  : 'text-gray-400 hover:text-white'
-              )}
-            >
+            <button key={f.key} onClick={() => setFilterTab(f.key)}
+              style={{ padding:'4px 12px', borderRadius:6, fontSize:12, fontWeight:600,
+                border:'none', cursor:'pointer', transition:'all .15s',
+                background: filterTab === f.key ? '#4f46e5' : 'transparent',
+                color:       filterTab === f.key ? '#fff'   : '#94a3b8' }}>
               {f.label}
             </button>
           ))}
         </div>
       </div>
 
-      {/* ── New-SLOC banner ── */}
+      {/* New-SLOC banner */}
       {newCount > 0 && (
-        <div className="flex items-center gap-3 px-4 py-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-sm text-amber-300">
-          <AlertTriangle size={16} className="shrink-0" />
+        <div style={{ display:'flex', alignItems:'center', gap:10, padding:'12px 16px',
+          background:'rgba(245,158,11,0.08)', border:'1px solid rgba(245,158,11,0.3)',
+          borderRadius:10, fontSize:13, color:'#fcd34d' }}>
+          <AlertTriangle size={15} style={{ flexShrink:0 }} />
           <span>
-            <strong>{newCount} new SLOC{newCount > 1 ? 's' : ''}</strong> detected in{' '}
-            <code className="text-xs bg-amber-900/40 px-1 rounded">ET_STORE_STOCK</code> that
-            haven't been saved yet. Click <strong>Sync New SLOCs</strong> to persist them, then set their KPI and status.
+            <strong>{newCount} new SLOC{newCount>1?'s':''}</strong> detected in ET_STORE_STOCK but not yet saved.
+            Click <strong>Sync New SLOCs</strong> to persist them, then set their KPI and Status.
           </span>
         </div>
       )}
 
-      {/* ── Table ── */}
-      <div className="bg-gray-800/50 border border-gray-700/50 rounded-xl overflow-hidden">
-        <table className="w-full text-sm">
+      {/* Table */}
+      <div style={{ background:'rgba(15,23,42,0.7)', border:'1px solid #1e293b', borderRadius:12, overflow:'hidden' }}>
+        <table style={{ width:'100%', borderCollapse:'collapse', fontSize:13 }}>
           <thead>
-            <tr className="border-b border-gray-700 bg-gray-800/80">
-              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-[160px]">
-                SLOC
-              </th>
-              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">
-                KPI Label
-              </th>
-              <th className="text-center px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-[160px]">
-                Active / Inactive
-              </th>
-              <th className="text-center px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-[80px]">
-                Status
-              </th>
+            <tr style={{ borderBottom:'2px solid #1e293b', background:'rgba(30,41,59,0.9)' }}>
+              {[
+                { label:'SLOC',              width:180  },
+                { label:'KPI',               width:'auto' },
+                { label:'ACTIVE / INACTIVE', width:200, center:true },
+                { label:'STATUS',            width:120, center:true },
+              ].map(h => (
+                <th key={h.label}
+                  style={{ padding:'10px 16px', textAlign: h.center ? 'center' : 'left',
+                    fontSize:11, fontWeight:700, color:'#94a3b8',
+                    letterSpacing:'0.07em', textTransform:'uppercase',
+                    width: h.width !== 'auto' ? h.width : undefined }}>
+                  {h.label}
+                </th>
+              ))}
             </tr>
           </thead>
+
           <tbody>
             {loading ? (
-              <tr>
-                <td colSpan={4} className="text-center py-16 text-gray-500">
-                  <RefreshCw size={20} className="animate-spin mx-auto mb-2" />
-                  Loading SLOC data…
-                </td>
-              </tr>
+              <tr><td colSpan={4} style={{ textAlign:'center', padding:60, color:'#64748b' }}>
+                <RefreshCw size={20} style={{ display:'block', margin:'0 auto 8px', animation:'spin 1s linear infinite' }} />
+                Loading SLOC data…
+              </td></tr>
             ) : visible.length === 0 ? (
-              <tr>
-                <td colSpan={4} className="text-center py-16 text-gray-500">
-                  No SLOC records found.
-                </td>
-              </tr>
-            ) : (
-              visible.map((row, idx) => {
-                const isDirty   = !!dirty[row.sloc]
-                const kpiVal    = getVal(row, 'kpi') || ''
-                const activeVal = getVal(row, 'is_active')
+              <tr><td colSpan={4} style={{ textAlign:'center', padding:60, color:'#64748b' }}>
+                No SLOC records found.
+              </td></tr>
+            ) : visible.map((row, idx) => {
+              const isDirty  = !!dirty[row.sloc]
+              const kpiVal   = getVal(row, 'kpi') ?? ''
+              const statusVal = getVal(row, 'status') ?? 'Active'
+              const isActive  = statusVal === 'Active'
 
-                return (
-                  <tr
-                    key={row.sloc}
-                    className={clsx(
-                      'border-b border-gray-700/40 transition-colors',
-                      isDirty
-                        ? 'bg-primary-900/20 hover:bg-primary-900/30'
-                        : idx % 2 === 0
-                          ? 'bg-transparent hover:bg-gray-700/30'
-                          : 'bg-gray-800/20 hover:bg-gray-700/30'
-                    )}
-                  >
-                    {/* SLOC */}
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <code className="font-mono font-semibold text-white text-sm">{row.sloc}</code>
-                        {row.is_new && <NewBadge />}
-                        {isDirty && (
-                          <span className="w-1.5 h-1.5 rounded-full bg-primary-400 shrink-0" title="Unsaved change" />
-                        )}
-                      </div>
-                    </td>
+              return (
+                <tr key={row.sloc}
+                  style={{
+                    borderBottom:'1px solid #1e293b',
+                    background: isDirty
+                      ? 'rgba(79,70,229,0.08)'
+                      : idx % 2 === 0 ? 'transparent' : 'rgba(30,41,59,0.3)',
+                    transition:'background .15s',
+                  }}>
 
-                    {/* KPI editable */}
-                    <td className="px-4 py-2">
-                      <input
-                        type="text"
-                        value={kpiVal}
-                        onChange={e => handleEdit(row.sloc, 'kpi', e.target.value)}
-                        placeholder="Enter KPI label…"
-                        className={clsx(
-                          'w-full px-3 py-1.5 rounded-lg text-sm bg-gray-700/60 border text-white placeholder-gray-500',
-                          'focus:outline-none focus:border-primary-500 transition-colors',
-                          isDirty && dirty[row.sloc]?.kpi !== undefined
-                            ? 'border-primary-500/60'
-                            : 'border-gray-600/50 hover:border-gray-500'
-                        )}
-                      />
-                    </td>
+                  {/* SLOC */}
+                  <td style={{ padding:'10px 16px' }}>
+                    <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                      <code style={{ fontFamily:'monospace', fontWeight:700, fontSize:13,
+                        color:'#e2e8f0', letterSpacing:'0.04em' }}>
+                        {row.sloc}
+                      </code>
+                      {row.is_new && <NewBadge />}
+                      {isDirty && (
+                        <span title="Unsaved change"
+                          style={{ width:6, height:6, borderRadius:'50%', background:'#818cf8', flexShrink:0 }} />
+                      )}
+                    </div>
+                  </td>
 
-                    {/* Active toggle */}
-                    <td className="px-4 py-2 text-center">
-                      <button
-                        onClick={() => toggleActive(row.sloc)}
-                        className={clsx(
-                          'relative inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all duration-150',
-                          activeVal
-                            ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40 hover:bg-emerald-500/25'
-                            : 'bg-rose-500/15 text-rose-400 border-rose-500/40 hover:bg-rose-500/25'
-                        )}
-                      >
-                        {/* toggle pill */}
-                        <span
-                          className={clsx(
-                            'w-8 h-4 rounded-full relative transition-colors duration-200 inline-block',
-                            activeVal ? 'bg-emerald-500' : 'bg-gray-600'
-                          )}
-                        >
-                          <span
-                            className={clsx(
-                              'absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-all duration-200',
-                              activeVal ? 'left-4' : 'left-0.5'
-                            )}
-                          />
-                        </span>
-                        {activeVal ? 'Active' : 'Inactive'}
-                      </button>
-                    </td>
+                  {/* KPI input */}
+                  <td style={{ padding:'8px 16px' }}>
+                    <input
+                      type="text"
+                      value={kpiVal}
+                      onChange={e => setField(row.sloc, 'kpi', e.target.value)}
+                      placeholder="Enter KPI label…"
+                      style={{
+                        width:'100%', padding:'7px 12px', borderRadius:7, fontSize:13,
+                        background: isDirty && dirty[row.sloc]?.kpi !== undefined
+                          ? 'rgba(79,70,229,0.15)' : '#1e293b',
+                        border: isDirty && dirty[row.sloc]?.kpi !== undefined
+                          ? '1px solid rgba(129,140,248,0.6)' : '1px solid #334155',
+                        color:'#f1f5f9',          /* ← WHITE text - always visible */
+                        outline:'none',
+                        boxSizing:'border-box',
+                        caretColor:'#818cf8',
+                        fontFamily:'inherit',
+                      }}
+                    />
+                  </td>
 
-                    {/* Status badge */}
-                    <td className="px-4 py-2 text-center">
-                      <Badge active={activeVal} />
-                    </td>
-                  </tr>
-                )
-              })
-            )}
+                  {/* Toggle */}
+                  <td style={{ padding:'8px 16px', textAlign:'center' }}>
+                    <button onClick={() => toggleStatus(row.sloc)}
+                      style={{
+                        display:'inline-flex', alignItems:'center', gap:8,
+                        padding:'6px 14px', borderRadius:8, fontSize:12, fontWeight:700,
+                        cursor:'pointer', transition:'all .15s',
+                        background: isActive ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)',
+                        border:     isActive ? '1px solid rgba(52,211,153,0.4)' : '1px solid rgba(248,113,113,0.4)',
+                        color:      isActive ? '#34d399' : '#f87171',
+                      }}>
+                      {/* Pill */}
+                      <span style={{
+                        width:34, height:18, borderRadius:9, position:'relative', display:'inline-block', flexShrink:0,
+                        background: isActive ? '#10b981' : '#475569', transition:'background .2s',
+                      }}>
+                        <span style={{
+                          position:'absolute', top:3, width:12, height:12, borderRadius:'50%',
+                          background:'#fff', boxShadow:'0 1px 3px rgba(0,0,0,0.4)',
+                          transition:'left .2s', left: isActive ? 19 : 3,
+                        }} />
+                      </span>
+                      {/* Label — always clearly readable */}
+                      <span style={{ color: isActive ? '#34d399' : '#f87171', fontWeight:700, fontSize:12 }}>
+                        {statusVal}
+                      </span>
+                    </button>
+                  </td>
+
+                  {/* Status badge */}
+                  <td style={{ padding:'8px 16px', textAlign:'center' }}>
+                    <StatusBadge status={statusVal} />
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
 
         {/* Footer */}
         {!loading && visible.length > 0 && (
-          <div className="px-4 py-2.5 bg-gray-800/60 border-t border-gray-700/50 text-xs text-gray-500 flex items-center justify-between">
+          <div style={{ padding:'10px 16px', background:'rgba(15,23,42,0.6)',
+            borderTop:'1px solid #1e293b', fontSize:12, color:'#64748b',
+            display:'flex', justifyContent:'space-between' }}>
             <span>Showing {visible.length} of {rows.length} records</span>
             {dirtyCount > 0 && (
-              <span className="text-amber-400 font-medium">
-                ● {dirtyCount} unsaved change{dirtyCount > 1 ? 's' : ''} — click Save Changes
+              <span style={{ color:'#fbbf24', fontWeight:600 }}>
+                ● {dirtyCount} unsaved change{dirtyCount>1?'s':''} — click Save Changes
               </span>
             )}
           </div>
         )}
       </div>
+
+      {/* CSS keyframe for spinner */}
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   )
 }
