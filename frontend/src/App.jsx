@@ -62,7 +62,7 @@ export default function App() {
         {/* Data Preparation */}
         <Route path="msa" element={<MSAStockCalculationPage />} />
         <Route path="contribution" element={<ContributionPercentageCalculationPage />} />
-        <Route path="data-prep/store-stock" element={<StoreStockPage />} />
+        <Route path="data-validation/store-sloc" element={<StoreStockPage />} />
         {/* Allocations */}
         <Route path="allocations" element={<AllocationsPage />} />
         <Route path="allocations/new" element={<NewAllocationPage />} />

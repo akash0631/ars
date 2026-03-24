@@ -196,7 +196,7 @@ export default function StoreStockPage() {
           margin:0, display:'flex', alignItems:'center', gap:8,
         }}>
           <Database size={20} color={C.primary} />
-          Store Stock – SLOC Settings
+          Store Sloc Validation
         </h1>
         <p style={{ fontSize:13, color: C.textSub, marginTop:4, margin:'4px 0 0' }}>
           Configure <strong style={{color:C.text}}>KPI</strong> labels and{' '}

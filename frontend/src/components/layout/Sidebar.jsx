@@ -3,7 +3,7 @@ import {
   LayoutDashboard, Table2, Upload, PackageCheck, Users, Shield, Eye, ScrollText,
   ChevronLeft, ChevronRight, Box, ChevronDown, FolderOpen, FilePlus, FileUp,
   FileDown, Edit3, Settings, Database, Columns, BarChart3, Cpu, Cog, Activity,
-  Clock, Truck
+  Clock, Truck, ClipboardCheck, ShieldCheck
 } from 'lucide-react'
 import useAuthStore from '@/store/authStore'
 import clsx from 'clsx'
@@ -34,7 +34,11 @@ const pendingItems = [
 const dataPreparationItems = [
   { label: 'MSA Stock Calculation', path: '/msa', icon: BarChart3 },
   { label: 'Contribution Percentage', path: '/contribution', icon: BarChart3 },
-  { label: 'Store Stock', path: '/data-prep/store-stock', icon: Database },
+]
+
+// Data Validation submenu
+const dataValidationItems = [
+  { label: 'Store Sloc Validation', path: '/data-validation/store-sloc', icon: ShieldCheck },
 ]
 
 // Settings submenu (admin features)
@@ -214,6 +218,15 @@ export default function Sidebar({ collapsed, onToggle }) {
           title="Data Preparation" 
           icon={Cpu} 
           items={dataPreparationItems} 
+          collapsed={collapsed}
+          hasPermission={hasPermission}
+        />
+
+        {/* Data Validation submenu */}
+        <SubMenu
+          title="Data Validation"
+          icon={ClipboardCheck}
+          items={dataValidationItems}
           collapsed={collapsed}
           hasPermission={hasPermission}
         />
