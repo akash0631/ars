@@ -25,6 +25,8 @@ import JobsDashboardPage from '@/pages/JobsDashboardPage'
 import PendingDeliveryOrderPage from '@/pages/PendingDeliveryOrderPage'
 import PendingAllocationPage from '@/pages/PendingAllocationPage'
 import BDCCreationPage from '@/pages/BDCCreationPage'
+import StoreStockPage from '@/pages/StoreStockPage'
+import GridBuilderPage from '@/pages/GridBuilderPage'
 // Duplicate imports removed
 
 function ProtectedRoute({ children, permission }) {
@@ -63,6 +65,9 @@ export default function App() {
         <Route path="msa" element={<MSAStockCalculationPage />} />
         <Route path="contribution" element={<ContributionPercentageCalculationPage />} />
         <Route path="bdc" element={<BDCCreationPage />} />
+        <Route path="data-validation/store-sloc" element={<StoreStockPage />} />
+        {/* Data Preparation - Store Stock Grid Builder */}
+        <Route path="data-prep/store-stock" element={<GridBuilderPage />} />
         {/* Allocations */}
         <Route path="allocations" element={<AllocationsPage />} />
         <Route path="allocations/new" element={<NewAllocationPage />} />

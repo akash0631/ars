@@ -14,7 +14,7 @@
     "notifications_enabled": false
   },
   "application": {
-    "app_name": "ARS ",
+    "app_name": "ARS",
     "max_upload_size_mb": 100,
     "session_timeout_minutes": 60,
     "enable_audit_logging": true,
@@ -24,9 +24,9 @@
   },
   "ui": {
     "primary_color": "#cccbd7",
-    "sidebar_collapsed": false,
+    "sidebar_collapsed": true,
     "show_row_numbers": true,
     "date_format": "YYYY-MM-DD",
-    "number_format": "en-US"
+    "number_format": "en-IN"
   }
 }
