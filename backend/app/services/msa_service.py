@@ -339,7 +339,7 @@ class MSAService:
                 }
 
             msa = df.copy()
-            msa.to_csv("Z:\\msa\\debug_msa_input.csv", index=False)  # Debug: save input data
+            
             
             
 
@@ -404,8 +404,6 @@ class MSAService:
                 )
                 .reset_index()
             )
-            # to be deleted after verification
-            msa_pivot.to_csv("Z:\\msa\\debug_msa_pivot.csv", index=False)  # Debug: save pivoted data
 
             # Calculate total stock across all SLOCs
             sloc_cols = [c for c in msa_pivot.columns if c not in pivot_keys]
@@ -445,7 +443,7 @@ class MSAService:
                     pend_pivot["PEND_QTY"] = pend_pivot[pend_cols].sum(axis=1)
                     pend_merged_cols = pend_cols
                     # to be deleted after verification
-                    pend_pivot.to_csv("Z:\\msa\\debug_pend_pivot.csv", index=False)  # Debug: save pivoted pending data
+                   
                     print("===========================2=================================")
 
                     msa_pivot = msa_pivot.merge(
@@ -458,7 +456,7 @@ class MSAService:
                     msa_pivot.drop(columns=["RDC"], inplace=True, errors="ignore") 
                     msa_pivot["PEND_QTY"] = msa_pivot["PEND_QTY"].fillna(0)
                     logger.info(f"Merged pending allocations: {len(pend_pivot)} records, merged on ARTICLE_NUMBER")
-                    msa_pivot.to_csv("Z:\\msa\\debug_msa_with_pend.csv", index=False)  # Debug: save after merging pending
+                   
                     print("=============================3===============================")
 
                     logger.info(f"Merged pending allocations")
@@ -477,7 +475,7 @@ class MSAService:
 
             logger.info(f"Calculated FNL_Q")
 
-            msa_pivot.to_csv("Z:\\msa\\debug_msa_final.csv", index=False)  # Debug: save final MSA data with FNL_Q
+           
             
 
             # ============ STEP 8: GENERATE COLOR VARIANTS (ROW LEVEL) ============
@@ -543,11 +541,11 @@ class MSAService:
 
             # ============ CONVERT TO DICTS AND RETURN ============
             msa_dict = msa_pivot.where(pd.notna(msa_pivot), None).to_dict("records")
-            pd.DataFrame(msa_dict).to_csv("Z:\\msa\\debug_msa_dict.csv", index=False)  # Debug: save final MSA dict data
+          
             gen_clr_dict = msa_gen_clr.where(pd.notna(msa_gen_clr), None).to_dict("records") if not msa_gen_clr.empty else []
-            pd.DataFrame(gen_clr_dict).to_csv("Z:\\msa\\debug_msa_gen_clr_dict.csv", index=False)  # Debug: save generated color dict data
+           
             var_dict = msa_gen_clr_var.where(pd.notna(msa_gen_clr_var), None).to_dict("records")
-            pd.DataFrame(var_dict).to_csv("Z:\\msa\\debug_msa_gen_clr_var_dict.csv", index=False)  # Debug: save color variant dict data
+             # Debug: save color variant dict data
 
             logger.info(f"✅ MSA calculation complete:")
             logger.info(f"   MSA: {len(msa_dict)} rows")

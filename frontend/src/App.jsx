@@ -24,6 +24,7 @@ import ContributionPercentageCalculationPage from '@/pages/ContributionPercentag
 import JobsDashboardPage from '@/pages/JobsDashboardPage'
 import PendingDeliveryOrderPage from '@/pages/PendingDeliveryOrderPage'
 import PendingAllocationPage from '@/pages/PendingAllocationPage'
+import BDCCreationPage from '@/pages/BDCCreationPage'
 // Duplicate imports removed
 
 function ProtectedRoute({ children, permission }) {
@@ -61,6 +62,7 @@ export default function App() {
         {/* Data Preparation */}
         <Route path="msa" element={<MSAStockCalculationPage />} />
         <Route path="contribution" element={<ContributionPercentageCalculationPage />} />
+        <Route path="bdc" element={<BDCCreationPage />} />
         {/* Allocations */}
         <Route path="allocations" element={<AllocationsPage />} />
         <Route path="allocations/new" element={<NewAllocationPage />} />

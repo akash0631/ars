@@ -463,6 +463,7 @@ class UpsertEngine:
         update_set = ", ".join(update_set_parts)
 
         # Change detection: only update if at least one non-skip column differs
+        when_matched_clause = ""
         if non_pk_columns:
             change_conditions = " OR ".join([
                 f"(source.[{c}] <> '__SKIP__' AND "
@@ -471,9 +472,9 @@ class UpsertEngine:
                 f"ELSE ISNULL(CAST(source.[{c}] AS NVARCHAR(MAX)), '') END)"
                 for c in non_pk_columns
             ])
-            update_condition = f"AND ({change_conditions})"
-        else:
-            update_condition = ""
+            when_matched_clause = f"""WHEN MATCHED AND ({change_conditions})
+            THEN UPDATE SET {update_set}
+        """
 
         # INSERT columns/values with special value handling and type casting
         all_columns = primary_key_columns + non_pk_columns
@@ -529,9 +530,7 @@ class UpsertEngine:
         MERGE [{target_table}] AS target
         USING {temp_table} AS source
         ON ({join_cond})
-        WHEN MATCHED {update_condition}
-            THEN UPDATE SET {update_set}
-        WHEN NOT MATCHED BY TARGET
+        {when_matched_clause}WHEN NOT MATCHED BY TARGET
             THEN INSERT ({insert_cols}) VALUES ({insert_vals})
         {output_clause};
         """
