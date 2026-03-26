@@ -225,12 +225,39 @@ def _build_and_run_grid(engine, grid: dict) -> dict:
     all_cols  = ", ".join(f"[{c}]" for c in hier_cols) + \
                 ", " + q_slocs + ", [STK_TTL]"
 
+    # Expected columns: hierarchy cols + active SLOC cols + STK_TTL
+    expected_cols_upper = {c.upper() for c in hier_cols} | {s.upper() for s in slocs} | {"STK_TTL"}
+
     with engine.connect() as conn:
-        # Drop and recreate output table to ensure schema matches current grid config
+        # Create output table if it doesn't exist
         _run(conn, f"""
-            IF OBJECT_ID('[{out_table}]', 'U') IS NOT NULL DROP TABLE [{out_table}];
+            IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME='{out_table}')
             CREATE TABLE [{out_table}] ({col_defs})
         """)
+
+        # Get existing columns in the output table
+        existing_rows = conn.execute(text("""
+            SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = :tbl
+        """), {"tbl": out_table}).fetchall()
+        existing_cols = {r[0].upper(): r[0] for r in existing_rows}
+
+        # Add columns for newly active SLOCs (and any missing hierarchy/STK_TTL cols)
+        for s in slocs:
+            if s.upper() not in existing_cols:
+                _run(conn, f"ALTER TABLE [{out_table}] ADD [{s}] NUMERIC(18,4) NULL")
+        for c in hier_cols:
+            if c.upper() not in existing_cols:
+                _run(conn, f"ALTER TABLE [{out_table}] ADD [{c}] NVARCHAR(200) NULL")
+        if "STK_TTL" not in existing_cols:
+            _run(conn, f"ALTER TABLE [{out_table}] ADD [STK_TTL] NUMERIC(18,4) NULL")
+
+        # Drop columns for inactive SLOCs (columns not in expected set)
+        for col_upper, col_actual in existing_cols.items():
+            if col_upper not in expected_cols_upper:
+                _run(conn, f"ALTER TABLE [{out_table}] DROP COLUMN [{col_actual}]")
+
+        # Truncate before inserting fresh data
+        _run(conn, f"TRUNCATE TABLE [{out_table}]")
 
         insert_sql = f""";
 WITH Stock_CTE AS (

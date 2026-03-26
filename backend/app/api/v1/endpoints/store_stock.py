@@ -200,7 +200,7 @@ def get_sloc_settings(current_user: User = Depends(get_current_user)):
         if sloc in saved:
             result.append({**saved[sloc], "is_new": False})
         else:
-            result.append({"id": None, "sloc": sloc, "kpi": None, "status": "Active",
+            result.append({"id": None, "sloc": sloc, "kpi": None, "status": "New",
                            "created_at": None, "updated_at": None, "is_new": True})
 
     new_count = sum(1 for r in result if r["is_new"])
@@ -211,7 +211,10 @@ def get_sloc_settings(current_user: User = Depends(get_current_user)):
 
 @router.post("/sync", response_model=APIResponse)
 def sync_slocs(current_user: User = Depends(get_current_user)):
-    de = get_data_engine()   # ARS_STORE_SLOC_SETTINGS lives in Rep_data
+    """Check for new SLOCs in ET_STORE_STOCK (read-only, no DB writes).
+    New SLOCs are shown in the GET response as 'New' status until the user
+    explicitly saves them via Save Changes."""
+    de = get_data_engine()
     try:
         _ensure_table(de)
     except Exception as e:
@@ -225,18 +228,8 @@ def sync_slocs(current_user: User = Depends(get_current_user)):
     saved     = _fetch_saved(de)
     new_slocs = [s for s in slocs if s not in saved]
 
-    if new_slocs:
-        sql = text(f"""
-            INSERT INTO {TABLE} (sloc, kpi, status, created_at, updated_at)
-            VALUES (:sloc, NULL, 'Active', GETDATE(), GETDATE())
-        """)
-        with de.connect() as conn:
-            for s in new_slocs:
-                conn.execute(sql, {"sloc": s})
-            conn.commit()
-
     return APIResponse(success=True,
-        message=f"Sync complete. {len(new_slocs)} new SLOC(s) added.",
+        message=f"Sync check complete. {len(new_slocs)} new SLOC(s) found.",
         data={"new_count": len(new_slocs), "new_slocs": new_slocs})
 
 

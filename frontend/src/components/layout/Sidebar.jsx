@@ -3,7 +3,7 @@ import {
   LayoutDashboard, Table2, Upload, PackageCheck, Users, Shield, Eye, ScrollText,
   ChevronLeft, ChevronRight, Box, ChevronDown, FolderOpen, FilePlus, FileUp,
   FileDown, Edit3, Settings, Database, Columns, BarChart3, Cpu, Cog, Activity,
-  Clock, Truck, FileText, ClipboardCheck, ShieldCheck, LayoutGrid
+  Clock, Truck, FileText, ClipboardCheck, ShieldCheck, LayoutGrid, Search
 } from 'lucide-react'
 import useAuthStore from '@/store/authStore'
 import clsx from 'clsx'
@@ -36,6 +36,7 @@ const dataPreparationItems = [
   { label: 'Contribution Percentage', path: '/contribution', icon: BarChart3 },
   { label: 'BDC Creation', path: '/bdc', icon: FileText },
   { label: 'Store Stock', path: '/data-prep/store-stock', icon: LayoutGrid },
+  { label: 'Lookup Art Master', path: '/data-prep/lookup-art-master', icon: Search },
 ]
 
 // Data Validation submenu

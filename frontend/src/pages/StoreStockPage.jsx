@@ -55,21 +55,24 @@ const C = {
 
 /* ── Reusable components ────────────────────────────────────────────────────── */
 
-const StatusBadge = ({ status }) => (
-  <span style={{
-    display:'inline-flex', alignItems:'center', gap:4,
-    padding:'3px 10px', borderRadius:20, fontSize:11, fontWeight:700,
-    background: status==='Active' ? C.greenBg  : C.redBg,
-    color:      status==='Active' ? C.green    : C.red,
-    border:     `1px solid ${status==='Active' ? C.greenBd : C.redBd}`,
-    whiteSpace:'nowrap',
-  }}>
-    {status==='Active'
-      ? <CheckCircle2 size={10} style={{flexShrink:0}}/>
-      : <XCircle      size={10} style={{flexShrink:0}}/>}
-    {status}
-  </span>
-)
+const StatusBadge = ({ status }) => {
+  const colors = status==='Active'  ? { bg:C.greenBg, fg:C.green, bd:C.greenBd }
+               : status==='New'     ? { bg:C.amberBg, fg:C.amber, bd:C.amberBd }
+               :                      { bg:C.redBg,   fg:C.red,   bd:C.redBd   }
+  const Icon   = status==='Active'  ? CheckCircle2
+               : status==='New'     ? AlertTriangle
+               :                      XCircle
+  return (
+    <span style={{
+      display:'inline-flex', alignItems:'center', gap:4,
+      padding:'3px 10px', borderRadius:20, fontSize:11, fontWeight:700,
+      background:colors.bg, color:colors.fg, border:`1px solid ${colors.bd}`,
+      whiteSpace:'nowrap',
+    }}>
+      <Icon size={10} style={{flexShrink:0}}/> {status}
+    </span>
+  )
+}
 
 const NewBadge = () => (
   <span style={{
@@ -118,31 +121,24 @@ export default function StoreStockPage() {
   const [search,    setSearch]    = useState('')
   const [filterTab, setFilterTab] = useState('all')
 
-  // Load data + auto-sync new SLOCs every time the page/menu becomes active
+  // Load merged list (saved + new unsaved SLOCs from ET_STORE_STOCK)
   const loadData = useCallback(async () => {
     setLoading(true)
     try {
-      // 1. Sync new SLOCs silently first (no toast on auto-sync)
-      setSyncing(true)
-      const syncRes = await storeStockAPI.syncSlocs()
-      const added = syncRes.data?.data?.new_count || 0
-      if (added > 0) toast.success(`Auto-synced ${added} new SLOC${added > 1 ? 's' : ''} from ET_STORE_STOCK`)
-
-      // 2. Then fetch the full merged list
       const { data } = await storeStockAPI.getSlocSettings()
       setRows(data.data.items || [])
       setDirty({})
-    } catch {} finally { setLoading(false); setSyncing(false) }
+    } catch {} finally { setLoading(false) }
   }, [])
   useEffect(() => { loadData() }, [loadData])
 
-  // Manual sync button still available to force a refresh
+  // Manual sync/refresh
   const handleSync = async () => {
     setSyncing(true)
     try {
-      const { data } = await storeStockAPI.syncSlocs()
-      toast.success(data.message)
       await loadData()
+      const nc = rows.filter(r => r.is_new).length
+      toast.success(nc > 0 ? `${nc} new SLOC(s) need attention` : 'All SLOCs up to date')
     } catch {} finally { setSyncing(false) }
   }
 
@@ -184,7 +180,7 @@ export default function StoreStockPage() {
     const st = getVal(r,'status')
     if (filterTab==='active')   return st==='Active'
     if (filterTab==='inactive') return st==='Inactive'
-    if (filterTab==='new')      return r.is_new
+    if (filterTab==='new')      return r.is_new || st==='New'
     return true
   })
 
@@ -287,18 +283,19 @@ export default function StoreStockPage() {
 
         {/* Stats strip */}
         <div style={{
-          display:'grid', gridTemplateColumns:'repeat(4,1fr)',
+          display:'grid', gridTemplateColumns:'repeat(5,1fr)',
           borderBottom:`1px solid ${C.cardBorder}`,
         }}>
           {[
             { label:'Total SLOCs',   value:rows.length,   color:C.text,   bg:'#f8fafc' },
             { label:'Active',        value:activeCount,   color:C.green,  bg:C.greenBg },
             { label:'Inactive',      value:inactiveCount, color:C.red,    bg:C.redBg   },
-            { label:'Unsaved Edits', value:dirtyCount,    color:C.amber,  bg:C.amberBg },
+            { label:'New',           value:newCount,      color:C.amber,  bg:C.amberBg },
+            { label:'Unsaved Edits', value:dirtyCount,    color:C.indigo, bg:C.indigoBg },
           ].map((s,i) => (
             <div key={s.label} style={{
               padding:'12px 18px', background:s.bg,
-              borderRight: i<3 ? `1px solid ${C.cardBorder}` : 'none',
+              borderRight: i<4 ? `1px solid ${C.cardBorder}` : 'none',
             }}>
               <div style={{ fontSize:26, fontWeight:800, color:s.color, lineHeight:1 }}>{s.value}</div>
               <div style={{ fontSize:11, color:C.textSub, marginTop:3, fontWeight:500 }}>{s.label}</div>
@@ -361,8 +358,8 @@ export default function StoreStockPage() {
           }}>
             <AlertTriangle size={14} style={{flexShrink:0}}/>
             <span style={{color:C.amber}}>
-              <strong>{newCount} new SLOC{newCount>1?'s':''}</strong> found in ET_STORE_STOCK but not yet saved.
-              Click <strong>Sync New SLOCs</strong> to persist them with default settings.
+              <strong>{newCount} new SLOC{newCount>1?'s':''}</strong> found in ET_STORE_STOCK — needs attention.
+              Set KPI, activate, and <strong>Save Changes</strong> to include in grid runs.
             </span>
           </div>
         )}

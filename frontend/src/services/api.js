@@ -313,4 +313,25 @@ export const gridBuilderAPI = {
   runAll:      ()           => api.post('/grid-builder/run-all'),
 }
 
+// ============== Lookup Art Master (Data Preparation) ==============
+export const lookupArtMasterAPI = {
+  getColumns: () => api.get('/lookup-art-master/columns'),
+  preview: (formData) =>
+    api.post('/lookup-art-master/preview', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 300000,
+    }),
+  run: (formData) =>
+    api.post('/lookup-art-master/run', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 300000,
+    }),
+  download: (formData) =>
+    api.post('/lookup-art-master/download', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      responseType: 'blob',
+      timeout: 300000,
+    }),
+}
+
 export default api

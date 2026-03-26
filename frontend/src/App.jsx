@@ -27,6 +27,7 @@ import PendingAllocationPage from '@/pages/PendingAllocationPage'
 import BDCCreationPage from '@/pages/BDCCreationPage'
 import StoreStockPage from '@/pages/StoreStockPage'
 import GridBuilderPage from '@/pages/GridBuilderPage'
+import LookupArtMasterPage from '@/pages/LookupArtMasterPage'
 // Duplicate imports removed
 
 function ProtectedRoute({ children, permission }) {
@@ -68,6 +69,7 @@ export default function App() {
         <Route path="data-validation/store-sloc" element={<StoreStockPage />} />
         {/* Data Preparation - Store Stock Grid Builder */}
         <Route path="data-prep/store-stock" element={<GridBuilderPage />} />
+        <Route path="data-prep/lookup-art-master" element={<LookupArtMasterPage />} />
         {/* Allocations */}
         <Route path="allocations" element={<AllocationsPage />} />
         <Route path="allocations/new" element={<NewAllocationPage />} />
