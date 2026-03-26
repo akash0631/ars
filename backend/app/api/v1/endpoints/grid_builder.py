@@ -173,7 +173,7 @@ def _build_and_run_grid(engine, grid: dict) -> dict:
 
     with engine.connect() as conn:
         sloc_rows = conn.execute(text(f"""
-            SELECT DISTINCT STK.SLOC
+            SELECT DISTINCT STK.SLOC, S.KPI
             FROM dbo.ET_STORE_STOCK STK
             INNER JOIN ARS_STORE_SLOC_SETTINGS S ON STK.SLOC = S.SLOC
             WHERE UPPER(S.STATUS) = 'ACTIVE'{kpi_clause}
@@ -184,10 +184,13 @@ def _build_and_run_grid(engine, grid: dict) -> dict:
     if not slocs:
         return {"rows": 0, "error": "No ACTIVE SLOCs found matching the criteria"}
 
+    # SLOCs where KPI = 'STK' → used for STK_TTL calculation
+    stk_slocs = [r[0] for r in sloc_rows if r[0] and r[1] and r[1].upper() == "STK"]
+
     # ── 2. Build quoted column lists ─────────────────────────────────────────
     q_slocs      = ", ".join(f"[{s}]" for s in slocs)
     isnull_cols  = ", ".join(f"ISNULL([{s}],0) AS [{s}]" for s in slocs)
-    sum_expr     = " + ".join(f"ISNULL([{s}],0)" for s in slocs)
+    sum_expr     = " + ".join(f"ISNULL([{s}],0)" for s in stk_slocs) if stk_slocs else "0"
 
     # ── 3. Hierarchy columns SELECT & JOIN ────────────────────────────────────
     # Determine which columns come from vw_master_product vs ET_STORE_STOCK
@@ -347,10 +350,27 @@ def update_grid(grid_id: int, payload: GridUpdate, current_user: User = Depends(
 def delete_grid(grid_id: int, current_user: User = Depends(get_current_user)):
     de = get_data_engine()
     _ensure_grid_table(de)
+
+    # Fetch the grid to get its output_table name
     with de.connect() as conn:
+        row = conn.execute(text(f"SELECT output_table FROM {GRID_TABLE} WHERE id=:id"),
+                           {"id": grid_id}).fetchone()
+    if not row:
+        raise HTTPException(404, f"Grid {grid_id} not found")
+
+    out_table = row[0]
+
+    with de.connect() as conn:
+        # Drop the output table if it exists
+        conn.execute(text(f"IF OBJECT_ID(:tbl, 'U') IS NOT NULL DROP TABLE [{out_table}]"),
+                     {"tbl": out_table})
+        # Delete the grid record
         conn.execute(text(f"DELETE FROM {GRID_TABLE} WHERE id=:id"), {"id": grid_id})
         conn.commit()
-    return APIResponse(success=True, message=f"Grid {grid_id} deleted.", data={"id": grid_id})
+
+    return APIResponse(success=True,
+        message=f"Grid {grid_id} and table [{out_table}] deleted.",
+        data={"id": grid_id, "dropped_table": out_table})
 
 
 @router.post("/grids/{grid_id}/run", response_model=APIResponse)

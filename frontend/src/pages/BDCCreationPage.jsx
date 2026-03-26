@@ -1,19 +1,26 @@
 import { useState, useRef, useCallback } from 'react'
-import { Upload, FileSpreadsheet, X, Loader2, AlertCircle, CheckCircle2, Table2, Download, Trash2, ArrowRight } from 'lucide-react'
+import { Upload, FileSpreadsheet, X, Loader2, AlertCircle, CheckCircle2, Table2, Download, ArrowRight, Hash, List, Trash2 } from 'lucide-react'
 import { bdcAPI } from '@/services/api'
 import toast from 'react-hot-toast'
 
 export default function BDCCreationPage() {
   const [file, setFile] = useState(null)
-  const [fileContent, setFileContent] = useState(null) // store raw file for download
+  const [fileContent, setFileContent] = useState(null)
   const [sheets, setSheets] = useState([])
   const [selectedSheet, setSelectedSheet] = useState('')
-  const [allocationNo, setAllocationNo] = useState('')
+  const [autoSave, setAutoSave] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [downloading, setDownloading] = useState(false)
   const [result, setResult] = useState(null)
+  const [error, setError] = useState('')
   const [dragOver, setDragOver] = useState(false)
   const fileInputRef = useRef()
+
+  // Sequences popup state
+  const [showSequences, setShowSequences] = useState(false)
+  const [sequences, setSequences] = useState([])
+  const [loadingSequences, setLoadingSequences] = useState(false)
+  const [deletingNo, setDeletingNo] = useState(null)
 
   const isExcel = (f) => /\.(xlsx|xls)$/i.test(f?.name || '')
 
@@ -29,6 +36,7 @@ export default function BDCCreationPage() {
     setFile(selectedFile)
     setFileContent(selectedFile)
     setResult(null)
+    setError('')
     setSheets([])
     setSelectedSheet('')
 
@@ -61,18 +69,23 @@ export default function BDCCreationPage() {
 
     setUploading(true)
     setResult(null)
+    setError('')
     try {
       const formData = new FormData()
       formData.append('file', file)
       if (selectedSheet) formData.append('sheet_name', selectedSheet)
-      formData.append('allocation_no', allocationNo.trim())
+      formData.append('auto_save', autoSave ? 'true' : 'false')
 
       const { data } = await bdcAPI.upload(formData)
       setResult(data)
-      toast.success(`BDC processed: ${data.total_rows} rows generated`)
+      if (data.saved) {
+        toast.success(`BDC processed & saved: ${data.total_rows} rows (Allocation #${data.allocation_no})`)
+      } else {
+        toast.success(`BDC processed: ${data.total_rows} rows generated`)
+      }
     } catch (err) {
       const msg = err.response?.data?.detail || err.message
-      toast.error(msg)
+      setError(msg)
     } finally {
       setUploading(false)
     }
@@ -86,7 +99,7 @@ export default function BDCCreationPage() {
       const formData = new FormData()
       formData.append('file', fileContent)
       if (selectedSheet) formData.append('sheet_name', selectedSheet)
-      formData.append('allocation_no', allocationNo.trim())
+      formData.append('allocation_no', result?.allocation_no || '')
 
       const response = await bdcAPI.download(formData)
       const url = window.URL.createObjectURL(new Blob([response.data]))
@@ -111,9 +124,38 @@ export default function BDCCreationPage() {
     setFileContent(null)
     setSheets([])
     setSelectedSheet('')
-    setAllocationNo('')
     setResult(null)
+    setError('')
     if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
+  const handleOpenSequences = async () => {
+    setShowSequences(true)
+    setLoadingSequences(true)
+    try {
+      const { data } = await bdcAPI.getSequences()
+      setSequences(data.sequences || [])
+    } catch (err) {
+      toast.error('Failed to load sequences')
+    } finally {
+      setLoadingSequences(false)
+    }
+  }
+
+  const handleDeleteSequence = async (allocationNo) => {
+    if (!confirm(`Delete all data for Allocation #${allocationNo}?`)) return
+
+    setDeletingNo(allocationNo)
+    try {
+      const { data } = await bdcAPI.deleteSequence(allocationNo)
+      toast.success(`Deleted ${data.deleted_rows} rows for Allocation #${allocationNo}`)
+      setSequences((prev) => prev.filter((s) => s.allocation_no !== allocationNo))
+    } catch (err) {
+      const msg = err.response?.data?.detail || err.message
+      toast.error(msg)
+    } finally {
+      setDeletingNo(null)
+    }
   }
 
   const formatFileSize = (bytes) => {
@@ -125,11 +167,20 @@ export default function BDCCreationPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">BDC Creation</h1>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-          Upload allocation quantity data to generate BDC output
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">BDC Creation</h1>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+            Upload allocation quantity data to generate BDC output
+          </p>
+        </div>
+        <button
+          onClick={handleOpenSequences}
+          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+        >
+          <List size={16} />
+          Sequences
+        </button>
       </div>
 
       {/* Upload Section */}
@@ -227,24 +278,22 @@ export default function BDCCreationPage() {
               </div>
             )}
 
-            {/* Allocation Number Input */}
-            <div className="mt-3">
-              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
-                Allocation Number <span className="text-red-500">*</span>
-              </label>
+            {/* Auto Save Checkbox */}
+            <label className="mt-3 flex items-center gap-2 cursor-pointer">
               <input
-                type="text"
-                value={allocationNo}
-                onChange={(e) => setAllocationNo(e.target.value.toUpperCase())}
-                placeholder="e.g. N345"
-                className="w-full text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white px-3 py-2 focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                type="checkbox"
+                checked={autoSave}
+                onChange={(e) => setAutoSave(e.target.checked)}
+                className="w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-primary-600 focus:ring-primary-500"
               />
-            </div>
+              <span className="text-sm text-gray-700 dark:text-gray-300">Save to Database</span>
+              <span className="text-[10px] text-gray-400 dark:text-gray-500">(saves to ARS_ALLOCATION_MASTER after processing)</span>
+            </label>
 
             {/* Process Button */}
             <button
               onClick={handleUpload}
-              disabled={uploading || !allocationNo.trim()}
+              disabled={uploading}
               className="mt-4 w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               {uploading ? (
@@ -263,18 +312,33 @@ export default function BDCCreationPage() {
         )}
       </div>
 
+      {/* Error Message */}
+      {error && (
+        <div className="flex items-center gap-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl px-4 py-3">
+          <AlertCircle size={18} className="text-red-500 shrink-0" />
+          <p className="text-sm text-red-700 dark:text-red-300">{error}</p>
+        </div>
+      )}
+
       {/* Processing Stats */}
       {result?.stats && (
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Processing Summary</h2>
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
-            <StatCard label="Input Rows" value={result.stats.input_rows} color="blue" />
-            <StatCard label="After Master Join" value={result.stats.after_master_join} color="indigo" />
-            <StatCard label="Hold Article Removed" value={result.stats.hold_article_removed} color="red" />
-            <StatCard label="Division (KIDS) Removed" value={result.stats.division_delete_removed} color="orange" />
-            <StatCard label="MAJ_CAT Removed" value={result.stats.majcat_delete_removed} color="amber" />
-            <StatCard label="Duplicates Removed" value={result.stats.duplicates_removed} color="red" />
-            <StatCard label="Final BDC Rows" value={result.stats.final_rows} color="green" />
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Processing Summary</h2>
+            {result.allocation_no && (
+              <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-bold text-primary-700 dark:text-primary-300 bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-800">
+                <Hash size={14} />
+                Allocation No: {result.allocation_no}
+              </span>
+            )}
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+            <StatCard label="Input Rows" value={result.stats.input_rows} qty={result.stats.input_qty} color="blue" />
+            <StatCard label="After Master Join" value={result.stats.after_master_join} qty={result.stats.after_master_join_qty} color="indigo" />
+            <StatCard label="Hold Article Removed" value={result.stats.hold_article_removed} qty={result.stats.hold_article_removed_qty} color="red" />
+            <StatCard label="Division (KIDS) Removed" value={result.stats.division_delete_removed} qty={result.stats.division_delete_removed_qty} color="orange" />
+            <StatCard label="MAJ_CAT Removed" value={result.stats.majcat_delete_removed} qty={result.stats.majcat_delete_removed_qty} color="amber" />
+            <StatCard label="Final BDC Rows" value={result.stats.final_rows} qty={result.stats.final_qty} color="green" />
           </div>
         </div>
       )}
@@ -282,7 +346,6 @@ export default function BDCCreationPage() {
       {/* Results / Preview Table */}
       {result && (
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
-          {/* Header with download */}
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
               <Table2 size={20} />
@@ -293,6 +356,14 @@ export default function BDCCreationPage() {
                 <CheckCircle2 size={14} />
                 {result.total_rows} rows
               </span>
+
+              {result.saved && (
+                <span className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-green-700 dark:text-green-300 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800">
+                  <CheckCircle2 size={14} />
+                  Saved
+                </span>
+              )}
+
               <button
                 onClick={handleDownload}
                 disabled={downloading}
@@ -311,20 +382,16 @@ export default function BDCCreationPage() {
           {result.total_rows > 100 && (
             <div className="flex items-center gap-2 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 rounded-lg px-3 py-2 mb-4">
               <AlertCircle size={14} />
-              Showing first 100 rows of {result.total_rows} total rows. Download Excel for complete data.
+              Showing first 100 rows of {result.total_rows} total rows. Download CSV for complete data.
             </div>
           )}
 
-          {/* Scrollable Table */}
           <div className="overflow-auto max-h-[500px] rounded-lg border border-gray-200 dark:border-gray-700">
             <table className="min-w-full text-sm">
               <thead className="bg-gray-50 dark:bg-gray-700 sticky top-0 z-10">
                 <tr>
                   {result.columns.map((col) => (
-                    <th
-                      key={col}
-                      className="px-3 py-2 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-600 whitespace-nowrap"
-                    >
+                    <th key={col} className="px-3 py-2 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-600 whitespace-nowrap">
                       {col}
                     </th>
                   ))}
@@ -334,11 +401,7 @@ export default function BDCCreationPage() {
                 {result.preview.map((row, idx) => (
                   <tr key={idx} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
                     {result.columns.map((col) => (
-                      <td
-                        key={col}
-                        className="px-3 py-1.5 text-xs text-gray-700 dark:text-gray-300 whitespace-nowrap"
-                        title={String(row[col] ?? '')}
-                      >
+                      <td key={col} className="px-3 py-1.5 text-xs text-gray-700 dark:text-gray-300 whitespace-nowrap" title={String(row[col] ?? '')}>
                         {row[col] !== null && row[col] !== undefined && row[col] !== '' ? String(row[col]) : '-'}
                       </td>
                     ))}
@@ -349,11 +412,86 @@ export default function BDCCreationPage() {
           </div>
         </div>
       )}
+
+      {/* Sequences Popup */}
+      {showSequences && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowSequences(false)}>
+          <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-2xl w-full max-w-3xl max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            {/* Popup Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
+                <List size={20} />
+                Saved Sequences
+              </h2>
+              <button
+                onClick={() => setShowSequences(false)}
+                className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Popup Body */}
+            <div className="flex-1 overflow-auto p-6">
+              {loadingSequences ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 size={24} className="animate-spin text-primary-500" />
+                  <span className="ml-2 text-sm text-gray-500">Loading sequences...</span>
+                </div>
+              ) : sequences.length === 0 ? (
+                <div className="text-center py-12 text-gray-500 dark:text-gray-400">
+                  No saved sequences found.
+                </div>
+              ) : (
+                <table className="min-w-full text-sm">
+                  <thead className="bg-gray-50 dark:bg-gray-700">
+                    <tr>
+                      <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 dark:text-gray-400">Allocation #</th>
+                      <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 dark:text-gray-400">Date</th>
+                      <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 dark:text-gray-400">Vendor</th>
+                      <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-500 dark:text-gray-400">Rows</th>
+                      <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-500 dark:text-gray-400">Total Qty</th>
+                      <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 dark:text-gray-400">Created</th>
+                      <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-500 dark:text-gray-400">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                    {sequences.map((seq) => (
+                      <tr key={seq.allocation_no} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                        <td className="px-4 py-2.5 text-sm font-semibold text-primary-600 dark:text-primary-400">{seq.allocation_no}</td>
+                        <td className="px-4 py-2.5 text-xs text-gray-700 dark:text-gray-300">{seq.alloc_date}</td>
+                        <td className="px-4 py-2.5 text-xs text-gray-700 dark:text-gray-300">{seq.vendor}</td>
+                        <td className="px-4 py-2.5 text-xs text-gray-700 dark:text-gray-300 text-right">{seq.total_rows?.toLocaleString()}</td>
+                        <td className="px-4 py-2.5 text-xs text-gray-700 dark:text-gray-300 text-right">{seq.total_qty?.toLocaleString()}</td>
+                        <td className="px-4 py-2.5 text-xs text-gray-500 dark:text-gray-400">{seq.created_at}</td>
+                        <td className="px-4 py-2.5 text-center">
+                          <button
+                            onClick={() => handleDeleteSequence(seq.allocation_no)}
+                            disabled={deletingNo === seq.allocation_no}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50 transition-colors"
+                          >
+                            {deletingNo === seq.allocation_no ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : (
+                              <Trash2 size={12} />
+                            )}
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
-function StatCard({ label, value, color }) {
+function StatCard({ label, value, qty, color }) {
   const colorMap = {
     blue: 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800',
     indigo: 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800',
@@ -366,6 +504,9 @@ function StatCard({ label, value, color }) {
     <div className={`rounded-lg border p-3 text-center ${colorMap[color] || colorMap.blue}`}>
       <p className="text-2xl font-bold">{value?.toLocaleString()}</p>
       <p className="text-[10px] font-medium mt-1 opacity-80">{label}</p>
+      {qty !== undefined && qty !== null && (
+        <p className="text-[10px] font-semibold mt-1 opacity-70">Qty: {qty?.toLocaleString()}</p>
+      )}
     </div>
   )
 }
