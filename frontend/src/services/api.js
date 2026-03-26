@@ -291,6 +291,11 @@ export const bdcAPI = {
     }),
   getSequences: () => api.get('/bdc/sequences'),
   deleteSequence: (allocationNo) => api.delete(`/bdc/sequences/${allocationNo}`),
+  deliveryOrderUpload: (formData) =>
+    api.post('/bdc/delivery-order-upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 300000,
+    }),
 }
 
 // ============== Store Stock (Data Preparation) ==============
