@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from 'react'
-import { Upload, FileSpreadsheet, X, Loader2, AlertCircle, CheckCircle2, Table2, Download, ArrowRight, Hash, List, Trash2 } from 'lucide-react'
+import { Upload, FileSpreadsheet, X, Loader2, AlertCircle, CheckCircle2, Table2, Download, ArrowRight, Hash, List, Trash2, Truck } from 'lucide-react'
 import { bdcAPI } from '@/services/api'
 import toast from 'react-hot-toast'
 
@@ -21,6 +21,14 @@ export default function BDCCreationPage() {
   const [sequences, setSequences] = useState([])
   const [loadingSequences, setLoadingSequences] = useState(false)
   const [deletingNo, setDeletingNo] = useState(null)
+
+  // Delivery Order popup state
+  const [showDeliveryOrder, setShowDeliveryOrder] = useState(false)
+  const [doFile, setDoFile] = useState(null)
+  const [doUploading, setDoUploading] = useState(false)
+  const [doResult, setDoResult] = useState(null)
+  const [doError, setDoError] = useState('')
+  const doFileRef = useRef()
 
   const isExcel = (f) => /\.(xlsx|xls)$/i.test(f?.name || '')
 
@@ -158,6 +166,48 @@ export default function BDCCreationPage() {
     }
   }
 
+  // Delivery Order handlers
+  const handleOpenDeliveryOrder = () => {
+    setShowDeliveryOrder(true)
+    setDoFile(null)
+    setDoResult(null)
+    setDoError('')
+  }
+
+  const handleDoFileSelect = (selectedFile) => {
+    if (!selectedFile) return
+    const ext = selectedFile.name.split('.').pop().toLowerCase()
+    if (!['csv', 'xlsx', 'xls'].includes(ext)) {
+      toast.error('Please upload a CSV or Excel file')
+      return
+    }
+    setDoFile(selectedFile)
+    setDoResult(null)
+    setDoError('')
+  }
+
+  const handleDoUpload = async () => {
+    if (!doFile) return
+
+    setDoUploading(true)
+    setDoResult(null)
+    setDoError('')
+    try {
+      const formData = new FormData()
+      formData.append('file', doFile)
+
+      const { data } = await bdcAPI.deliveryOrderUpload(formData)
+      setDoResult(data)
+      toast.success(`Delivery Order updated: ${data.updated_rows} rows`)
+    } catch (err) {
+      const msg = err.response?.data?.detail || err.message
+      setDoError(msg)
+      toast.error(msg)
+    } finally {
+      setDoUploading(false)
+    }
+  }
+
   const formatFileSize = (bytes) => {
     if (bytes < 1024) return `${bytes} B`
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
@@ -174,13 +224,22 @@ export default function BDCCreationPage() {
             Upload allocation quantity data to generate BDC output
           </p>
         </div>
-        <button
-          onClick={handleOpenSequences}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-        >
-          <List size={16} />
-          Sequences
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleOpenDeliveryOrder}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-orange-700 dark:text-orange-300 bg-white dark:bg-gray-800 border border-orange-300 dark:border-orange-600 hover:bg-orange-50 dark:hover:bg-orange-900/20 transition-colors"
+          >
+            <Truck size={16} />
+            Delivery Order
+          </button>
+          <button
+            onClick={handleOpenSequences}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+          >
+            <List size={16} />
+            Sequences
+          </button>
+        </div>
       </div>
 
       {/* Upload Section */}
@@ -192,7 +251,7 @@ export default function BDCCreationPage() {
           </h2>
           <button
             onClick={() => {
-              const headers = ['ALLOC-DATE', 'RDC', 'VAR-ART', 'ST-CD', 'ALLOC-QTY', 'PICKING_DATE']
+              const headers = ['ALLOC-DATE', 'RDC', 'VAR-ART', 'ST-CD', 'ALLOC-QTY', 'PICKING_DATE', 'STATUS']
               const csv = headers.join(',') + '\n'
               const blob = new Blob([csv], { type: 'text/csv' })
               const url = window.URL.createObjectURL(blob)
@@ -237,7 +296,7 @@ export default function BDCCreationPage() {
             Drag & drop your file here, or <span className="text-primary-600 dark:text-primary-400">browse</span>
           </p>
           <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-            Supports CSV, XLS, XLSX — Required columns: ALLOC-DATE, RDC, VAR-ART, ST-CD, ALLOC-QTY, PICKING_DATE
+            Supports CSV, XLS, XLSX — Required columns: ALLOC-DATE, RDC, VAR-ART, ST-CD, ALLOC-QTY, PICKING_DATE, STATUS (PEND/NEW)
           </p>
         </div>
 
@@ -417,7 +476,6 @@ export default function BDCCreationPage() {
       {showSequences && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowSequences(false)}>
           <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-2xl w-full max-w-3xl max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-            {/* Popup Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
                 <List size={20} />
@@ -430,8 +488,6 @@ export default function BDCCreationPage() {
                 <X size={18} />
               </button>
             </div>
-
-            {/* Popup Body */}
             <div className="flex-1 overflow-auto p-6">
               {loadingSequences ? (
                 <div className="flex items-center justify-center py-12">
@@ -483,6 +539,135 @@ export default function BDCCreationPage() {
                   </tbody>
                 </table>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delivery Order Popup */}
+      {showDeliveryOrder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowDeliveryOrder(false)}>
+          <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-2xl w-full max-w-lg flex flex-col" onClick={(e) => e.stopPropagation()}>
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
+                <Truck size={20} />
+                Upload Delivery Order
+              </h2>
+              <button
+                onClick={() => setShowDeliveryOrder(false)}
+                className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-6 space-y-4">
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                Upload a file with columns: <span className="font-semibold">VENDOR, RECEIVING STORE, MATERIAL NO, Allocation Number, DELIVERY_ORDER</span>.
+                Matching rows in ARS_ALLOCATION_MASTER will be updated.
+              </p>
+
+              {/* Template Download */}
+              <button
+                onClick={() => {
+                  const headers = ['VENDOR', 'RECEIVING STORE', 'MATERIAL NO', 'Allocation Number', 'DELIVERY_ORDER']
+                  const csv = headers.join(',') + '\n'
+                  const blob = new Blob([csv], { type: 'text/csv' })
+                  const url = window.URL.createObjectURL(blob)
+                  const link = document.createElement('a')
+                  link.href = url
+                  link.download = 'Delivery_Order_Template.csv'
+                  document.body.appendChild(link)
+                  link.click()
+                  link.remove()
+                  window.URL.revokeObjectURL(url)
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-orange-600 dark:text-orange-400 border border-orange-300 dark:border-orange-700 hover:bg-orange-50 dark:hover:bg-orange-900/20 transition-colors"
+              >
+                <Download size={14} />
+                Download Template
+              </button>
+
+              {/* File Input */}
+              <div
+                onClick={() => doFileRef.current?.click()}
+                className="border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all duration-200 border-gray-300 dark:border-gray-600 hover:border-orange-400 hover:bg-gray-50 dark:hover:bg-gray-700/50"
+              >
+                <input
+                  ref={doFileRef}
+                  type="file"
+                  accept=".csv,.xlsx,.xls"
+                  onChange={(e) => handleDoFileSelect(e.target.files?.[0])}
+                  className="hidden"
+                />
+                {doFile ? (
+                  <div className="flex items-center justify-center gap-3">
+                    <FileSpreadsheet size={20} className="text-orange-500" />
+                    <div className="text-left">
+                      <p className="text-sm font-medium text-gray-900 dark:text-white">{doFile.name}</p>
+                      <p className="text-xs text-gray-500">{formatFileSize(doFile.size)}</p>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <Upload size={32} className="mx-auto mb-2 text-gray-400" />
+                    <p className="text-sm text-gray-600 dark:text-gray-400">Click to select file</p>
+                  </>
+                )}
+              </div>
+
+              {/* Error */}
+              {doError && (
+                <div className="flex items-center gap-2 text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 rounded-lg px-3 py-2">
+                  <AlertCircle size={14} />
+                  {doError}
+                </div>
+              )}
+
+              {/* Result */}
+              {doResult && (
+                <div className="bg-green-50 dark:bg-green-900/20 rounded-lg p-4 space-y-1">
+                  <div className="flex items-center gap-2 text-sm font-medium text-green-700 dark:text-green-300">
+                    <CheckCircle2 size={16} />
+                    Delivery Order Updated
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 mt-2">
+                    <div className="text-center">
+                      <p className="text-lg font-bold text-green-700 dark:text-green-300">{doResult.total_file_rows}</p>
+                      <p className="text-[10px] text-green-600 dark:text-green-400">File Rows</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-lg font-bold text-green-700 dark:text-green-300">{doResult.updated_rows}</p>
+                      <p className="text-[10px] text-green-600 dark:text-green-400">Updated</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-lg font-bold text-amber-700 dark:text-amber-300">{doResult.not_found_rows}</p>
+                      <p className="text-[10px] text-amber-600 dark:text-amber-400">Not Found</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Upload Button */}
+              <button
+                onClick={handleDoUpload}
+                disabled={!doFile || doUploading}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium text-white bg-orange-600 hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {doUploading ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" />
+                    Updating...
+                  </>
+                ) : (
+                  <>
+                    <Upload size={16} />
+                    Upload & Update
+                  </>
+                )}
+              </button>
             </div>
           </div>
         </div>
