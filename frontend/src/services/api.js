@@ -274,6 +274,11 @@ export const bdcAPI = {
       headers: { 'Content-Type': 'multipart/form-data' },
       timeout: 300000,
     }),
+  save: (formData) =>
+    api.post('/bdc/save', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 300000,
+    }),
   download: (formData) =>
     api.post('/bdc/download', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
@@ -284,6 +289,8 @@ export const bdcAPI = {
     api.post('/bdc/sheets', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     }),
+  getSequences: () => api.get('/bdc/sequences'),
+  deleteSequence: (allocationNo) => api.delete(`/bdc/sequences/${allocationNo}`),
 }
 
 // ============== Store Stock (Data Preparation) ==============
