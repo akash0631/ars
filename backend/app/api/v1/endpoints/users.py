@@ -120,7 +120,9 @@ async def delete_user(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Deactivate and soft-delete a user (cannot delete superadmin or yourself)."""
+    """Hard delete a user and all related records."""
+    from sqlalchemy import text
+
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -129,15 +131,12 @@ async def delete_user(
     if user.id == current_user.id:
         raise HTTPException(status_code=400, detail="Cannot delete yourself")
 
-    # Soft delete: deactivate user and all role assignments
-    user.is_active = False
-    for ur in user.user_roles:
-        ur.is_active = False
-
-    # Also clean up RLS access
-    from sqlalchemy import text
+    username = user.username
+    # Delete all related records first (foreign keys)
     db.execute(text("DELETE FROM rls_user_store_access WHERE user_id = :uid"), {"uid": user_id})
     db.execute(text("DELETE FROM rls_user_region_access WHERE user_id = :uid"), {"uid": user_id})
-
+    db.execute(text("DELETE FROM rbac_user_roles WHERE user_id = :uid"), {"uid": user_id})
+    db.execute(text("UPDATE audit_log SET changed_by = :name WHERE changed_by = (SELECT username FROM rbac_users WHERE id = :uid)"), {"name": f"[deleted]{username}", "uid": user_id})
+    db.execute(text("DELETE FROM rbac_users WHERE id = :uid"), {"uid": user_id})
     db.commit()
-    return APIResponse(message=f"User '{user.username}' deactivated and access revoked")
+    return APIResponse(message=f"User '{username}' deleted permanently")
