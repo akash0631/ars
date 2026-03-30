@@ -33,10 +33,17 @@ const pendingItems = [
 // Data Preparation submenu
 const dataPreparationItems = [
   { label: 'MSA Stock Calculation', path: '/msa', icon: BarChart3 },
-  { label: 'Contribution Percentage', path: '/contribution', icon: BarChart3 },
   { label: 'BDC Creation', path: '/bdc', icon: FileText },
   { label: 'Store Stock', path: '/data-prep/store-stock', icon: LayoutGrid },
   { label: 'Lookup Art Master', path: '/data-prep/lookup-art-master', icon: Search },
+]
+
+// Contribution Percentage submenu
+const contributionItems = [
+  { label: 'Presets', path: '/contribution/presets', icon: Settings },
+  { label: 'Mappings', path: '/contribution/mappings', icon: Columns },
+  { label: 'Execute', path: '/contribution/execute', icon: Cpu },
+  { label: 'Review', path: '/contribution/review', icon: ClipboardCheck },
 ]
 
 // Data Validation submenu
@@ -221,6 +228,15 @@ export default function Sidebar({ collapsed, onToggle }) {
           title="Data Preparation" 
           icon={Cpu} 
           items={dataPreparationItems} 
+          collapsed={collapsed}
+          hasPermission={hasPermission}
+        />
+
+        {/* Contribution Percentage submenu */}
+        <SubMenu
+          title="Contribution %"
+          icon={BarChart3}
+          items={contributionItems}
           collapsed={collapsed}
           hasPermission={hasPermission}
         />

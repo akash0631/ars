@@ -107,7 +107,11 @@ class UpsertEngine:
             raise ValueError(f"Primary key columns missing from data: {missing_pks}")
 
         # Drop duplicate PKs in incoming data (keep last)
-        df = df.drop_duplicates(subset=primary_key_columns, keep="last")
+        # RTRIM to match SQL Server's trailing-space-insensitive PK comparison
+        dedup_key = df[primary_key_columns].astype(str).apply(
+            lambda r: '|||'.join(v.rstrip() for v in r), axis=1
+        )
+        df = df[~dedup_key.duplicated(keep='last')].copy()
 
         # Get target table column info
         target_columns = self._get_table_columns(table_name)
@@ -275,6 +279,13 @@ class UpsertEngine:
         Process a single chunk using SQL Server MERGE.
         Returns: (inserted, updated, unchanged, changed_columns_count, row_changes)
         """
+        # Deduplicate on PK columns (keep last occurrence) to prevent MERGE conflict
+        # RTRIM to match SQL Server's trailing-space-insensitive PK comparison
+        dedup_key = chunk_df[primary_key_columns].astype(str).apply(
+            lambda r: '|||'.join(v.rstrip() for v in r), axis=1
+        )
+        chunk_df = chunk_df[~dedup_key.duplicated(keep='last')].copy()
+
         temp_table = f"##upsert_temp_{batch_id}_{chunk_number}"
         non_pk_columns = [c for c in chunk_df.columns if c not in primary_key_columns]
         changed_columns_count: Dict[str, int] = {}

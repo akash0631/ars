@@ -20,7 +20,10 @@ import RLSPage from '@/pages/RLSPage'
 import TableManagementPage from '@/pages/TableManagementPage'
 import SettingsPage from '@/pages/SettingsPage'
 import MSAStockCalculationPage from '@/pages/MSAStockCalculationPage'
-import ContributionPercentageCalculationPage from '@/pages/ContributionPercentageCalculationPage'
+import ContribPresetsPage from '@/pages/ContribPresetsPage'
+import ContribMappingsPage from '@/pages/ContribMappingsPage'
+import ContribExecutePage from '@/pages/ContribExecutePage'
+import ContribReviewPage from '@/pages/ContribReviewPage'
 import JobsDashboardPage from '@/pages/JobsDashboardPage'
 import PendingDeliveryOrderPage from '@/pages/PendingDeliveryOrderPage'
 import PendingAllocationPage from '@/pages/PendingAllocationPage'
@@ -64,7 +67,10 @@ export default function App() {
         <Route path="pending/allocation" element={<PendingAllocationPage />} />
         {/* Data Preparation */}
         <Route path="msa" element={<MSAStockCalculationPage />} />
-        <Route path="contribution" element={<ContributionPercentageCalculationPage />} />
+        <Route path="contribution/presets" element={<ContribPresetsPage />} />
+        <Route path="contribution/mappings" element={<ContribMappingsPage />} />
+        <Route path="contribution/execute" element={<ContribExecutePage />} />
+        <Route path="contribution/review" element={<ContribReviewPage />} />
         <Route path="bdc" element={<BDCCreationPage />} />
         <Route path="data-validation/store-sloc" element={<StoreStockPage />} />
         {/* Data Preparation - Store Stock Grid Builder */}

@@ -22,8 +22,8 @@ from app.api.v1.endpoints.allocations import router as allocations_router
 from app.api.v1.endpoints.msa_stock import router as msa_router
 from app.api.v1.endpoints.msa import router as msa_legacy_router
 
-# Phase 4b: Contribution Percentage Analysis
-from app.api.v1.endpoints.contribution import router as contribution_router
+# Phase 4b: Contribution Percentage
+from app.api.v1.endpoints.contrib import router as contrib_router
 
 # Phase 4c: BDC Creation
 from app.api.v1.endpoints.bdc import router as bdc_router
@@ -62,8 +62,8 @@ api_router.include_router(allocations_router)
 api_router.include_router(msa_router)
 api_router.include_router(msa_legacy_router)
 
-# Phase 4b: Contribution Percentage Analysis
-api_router.include_router(contribution_router)
+# Phase 4b: Contribution Percentage
+api_router.include_router(contrib_router)
 
 # Phase 4c: BDC Creation
 api_router.include_router(bdc_router)

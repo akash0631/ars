@@ -379,18 +379,10 @@ export default function BDCCreationPage() {
         </div>
       )}
 
-      {/* Processing Stats */}
+      {/* Processing Summary */}
       {result?.stats && (
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Processing Summary</h2>
-            {result.allocation_no && (
-              <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-bold text-primary-700 dark:text-primary-300 bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-800">
-                <Hash size={14} />
-                Allocation No: {result.allocation_no}
-              </span>
-            )}
-          </div>
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Processing Summary</h2>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
             <StatCard label="Input Rows" value={result.stats.input_rows} qty={result.stats.input_qty} color="blue" />
             <StatCard label="After Master Join" value={result.stats.after_master_join} qty={result.stats.after_master_join_qty} color="indigo" />
@@ -565,14 +557,14 @@ export default function BDCCreationPage() {
             {/* Body */}
             <div className="p-6 space-y-4">
               <p className="text-xs text-gray-500 dark:text-gray-400">
-                Upload a file with columns: <span className="font-semibold">VENDOR, RECEIVING STORE, MATERIAL NO, Allocation Number, DELIVERY_ORDER</span>.
+                Upload a file with columns: <span className="font-semibold">VENDOR, RECEIVING STORE, MATERIAL NO, Allocation Number, DO_QTY</span>.
                 Matching rows in ARS_ALLOCATION_MASTER will be updated.
               </p>
 
               {/* Template Download */}
               <button
                 onClick={() => {
-                  const headers = ['VENDOR', 'RECEIVING STORE', 'MATERIAL NO', 'Allocation Number', 'DELIVERY_ORDER']
+                  const headers = ['VENDOR', 'RECEIVING STORE', 'MATERIAL NO', 'Allocation Number', 'DO_QTY']
                   const csv = headers.join(',') + '\n'
                   const blob = new Blob([csv], { type: 'text/csv' })
                   const url = window.URL.createObjectURL(blob)

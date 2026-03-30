@@ -152,7 +152,17 @@ def _fetch_distinct_slocs(data_engine) -> List[str]:
             rows = conn.execute(text(
                 "SELECT DISTINCT sloc FROM ET_STORE_STOCK ORDER BY sloc ASC"
             )).fetchall()
-        return [str(r[0]) for r in rows if r[0] is not None]
+        slocs = [str(r[0]) for r in rows if r[0] is not None]
+
+        # Add PEND_ALC as virtual SLOC if ARS_pend_alc table exists
+        with data_engine.connect() as conn:
+            pend_exists = conn.execute(text(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME='ARS_pend_alc'"
+            )).scalar()
+            if pend_exists and 'PEND_ALC' not in slocs:
+                slocs.append('PEND_ALC')
+
+        return slocs
     except Exception as e:
         logger.error(f"ET_STORE_STOCK query failed: {e}")
         raise

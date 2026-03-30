@@ -3,7 +3,7 @@ BDC Creation API Endpoints
 - Upload allocation quantity data (CSV/Excel)
 - Process: join with VW_MASTER_PRODUCT, filter out hold/division/majcat exclusions
 - Return BDC-format output ready for download
-- Status upload: update ARS_ALLOCATION_MASTER with DELIVERY_ORDER column
+- Status upload: update ARS_ALLOCATION_MASTER with DO_QTY column
 """
 import io
 from typing import Optional
@@ -36,7 +36,7 @@ def _read_file_to_df(content: bytes, filename: str, sheet_name: Optional[str] = 
     return df
 
 
-def _process_bdc(df: pd.DataFrame, engine, allocation_no: str = "") -> dict:
+def _process_bdc(df: pd.DataFrame, engine, allocation_no="", alloc_batch: str = "") -> dict:
     """
     BDC Processing Pipeline:
     1. Aggregate PEND/NEW status rows: sum qty by VAR-ART + ST-CD + RDC, track pending qty
@@ -60,6 +60,7 @@ def _process_bdc(df: pd.DataFrame, engine, allocation_no: str = "") -> dict:
         "majcat_delete_removed_qty": 0,
         "final_rows": 0,
         "final_qty": 0,
+        "alloc_batch": alloc_batch,
     }
 
     # Clean input - drop fully empty rows
@@ -215,8 +216,9 @@ def _process_bdc(df: pd.DataFrame, engine, allocation_no: str = "") -> dict:
     combined["RECEIVING STORE"] = combined["ST-CD"].astype(str).str.strip()
     combined["Picking Date"] = pd.to_datetime(combined["PICKING_DATE"]).dt.strftime("%Y-%m-%d")
     combined["Remark"] = ""
+    combined["ALLOC_BATCH"] = stats.get("alloc_batch", "")
 
-    output = combined[["Serial No", "Allocation Date", "Allocation Number", "VENDOR", "MATERIAL NO", "BDC-QTY", "RECEIVING STORE", "Picking Date", "Remark"]].copy()
+    output = combined[["Serial No", "Allocation Date", "Allocation Number", "ALLOC_BATCH", "VENDOR", "MATERIAL NO", "BDC-QTY", "RECEIVING STORE", "Picking Date", "Remark"]].copy()
 
     stats["final_rows"] = len(output)
     stats["final_qty"] = int(output["BDC-QTY"].sum())
@@ -226,45 +228,91 @@ def _process_bdc(df: pd.DataFrame, engine, allocation_no: str = "") -> dict:
     wp["PEND-QTY"] = wp["PEND-QTY"].fillna(0).astype(int)
     wp["BDC-QTY-WP"] = (wp["ALLOC-QTY"].astype(int) - wp["PEND-QTY"]).clip(lower=0)
 
-    wp_output = wp[["Serial No", "Allocation Date", "Allocation Number", "VENDOR", "MATERIAL NO", "RECEIVING STORE", "Picking Date", "Remark"]].copy()
+    wp_output = wp[["Serial No", "Allocation Date", "Allocation Number", "ALLOC_BATCH", "VENDOR", "MATERIAL NO", "RECEIVING STORE", "Picking Date", "Remark"]].copy()
     wp_output["BDC-QTY"] = wp["BDC-QTY-WP"]
-    wp_output = wp_output[["Serial No", "Allocation Date", "Allocation Number", "VENDOR", "MATERIAL NO", "BDC-QTY", "RECEIVING STORE", "Picking Date", "Remark"]]
+    wp_output = wp_output[["Serial No", "Allocation Date", "Allocation Number", "ALLOC_BATCH", "VENDOR", "MATERIAL NO", "BDC-QTY", "RECEIVING STORE", "Picking Date", "Remark"]]
     # Remove rows where qty became 0 after subtracting pending
     wp_output = wp_output[wp_output["BDC-QTY"] > 0].copy()
     wp_output = wp_output.reset_index(drop=True)
     wp_output["Serial No"] = range(1, len(wp_output) + 1)
 
-    preview = output.head(100).to_dict(orient="records")
-    columns = list(output.columns)
+    # Preview excludes ALLOC_BATCH (internal reference, not for SAP export)
+    export_cols = [c for c in output.columns if c != 'ALLOC_BATCH']
+    preview = output[export_cols].head(100).to_dict(orient="records")
 
     return {
         "success": True,
         "stats": stats,
         "total_rows": len(output),
-        "columns": columns,
+        "columns": export_cols,
         "preview": preview,
-        "_full_data": output,
-        "_full_data_without_pending": wp_output,
+        "_full_data": output,              # includes ALLOC_BATCH for DB save
+        "_full_data_without_pending": wp_output,  # includes ALLOC_BATCH for DB save
     }
 
 
-def _get_next_allocation_no(engine) -> int:
-    """Get the next allocation number by checking ARS_ALLOCATION_MASTER."""
+def _get_next_batch_no(engine) -> str:
+    """Central batch sequence: FY-{3-digit serial}. e.g., 2526-001. One per upload, shared across stores."""
+    fy = _get_fy_tag()
+    prefix = f"{fy}-"
     table_name = "ARS_ALLOCATION_MASTER"
     with engine.connect() as conn:
-        result = conn.execute(text(
-            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = :tbl"
-        ), {"tbl": table_name})
-        if result.scalar() == 0:
-            return 1
+        tbl_exists = conn.execute(text(
+            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME=:t"
+        ), {"t": table_name}).scalar()
+        if tbl_exists:
+            # Check if ALLOC_BATCH column exists
+            has_col = conn.execute(text(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME=:t AND COLUMN_NAME='ALLOC_BATCH'"
+            ), {"t": table_name}).scalar()
+            if has_col:
+                row = conn.execute(text(f"""
+                    SELECT MAX([ALLOC_BATCH]) FROM dbo.{table_name} WITH (NOLOCK)
+                    WHERE [ALLOC_BATCH] LIKE :p
+                """), {"p": prefix + "%"}).scalar()
+                if row:
+                    try:
+                        last = int(str(row).split("-")[-1])
+                        return f"{prefix}{last + 1:03d}"
+                    except (ValueError, IndexError):
+                        pass
+    return f"{prefix}001"
 
-        result = conn.execute(text(f"""
-            SELECT MAX(CAST([Allocation Number] AS INT))
-            FROM dbo.{table_name}
-            WHERE ISNUMERIC([Allocation Number]) = 1
-        """))
-        max_no = result.scalar()
-        return (max_no or 0) + 1
+
+def _get_fy_tag():
+    """Get current financial year tag. FY runs April-March. e.g., Apr 2025 – Mar 2026 → '2526'."""
+    from datetime import date
+    today = date.today()
+    fy_start = today.year if today.month >= 4 else today.year - 1
+    fy_end = fy_start + 1
+    return f"{fy_start % 100:02d}{fy_end % 100:02d}"
+
+
+def _get_next_allocation_no(engine) -> str:
+    """Generate single unique allocation number per upload: {FY}-{3-digit serial}. e.g., 2526-001."""
+    table_name = "ARS_ALLOCATION_MASTER"
+    fy = _get_fy_tag()
+    prefix = f"{fy}-"
+
+    with engine.connect() as conn:
+        tbl_exists = conn.execute(text(
+            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME=:t"
+        ), {"t": table_name}).scalar()
+
+        if tbl_exists:
+            row = conn.execute(text(f"""
+                SELECT MAX([Allocation Number])
+                FROM dbo.{table_name} WITH (NOLOCK)
+                WHERE [Allocation Number] LIKE :prefix
+            """), {"prefix": prefix + "%"}).scalar()
+            if row:
+                try:
+                    last_serial = int(str(row).split("-")[-1])
+                    return f"{prefix}{last_serial + 1:03d}"
+                except (ValueError, IndexError):
+                    pass
+
+    return f"{prefix}001"
 
 
 def _save_to_db(output_df: pd.DataFrame, engine):
@@ -283,8 +331,9 @@ def _save_to_db(output_df: pd.DataFrame, engine):
                     [Serial No]          INT,
                     [Allocation Date]    VARCHAR(20),
                     [Allocation Number]  VARCHAR(50),
+                    [ALLOC_BATCH]        VARCHAR(20),
                     [VENDOR]             VARCHAR(50),
-                    [MATERIAL NO]        VARCHAR(50),
+                    [MATERIAL NO]        BIGINT,
                     [BDC-QTY]            INT,
                     [RECEIVING STORE]    VARCHAR(20),
                     [Picking Date]       VARCHAR(20),
@@ -293,8 +342,23 @@ def _save_to_db(output_df: pd.DataFrame, engine):
                 )
             """))
             conn.commit()
+        else:
+            # Add ALLOC_BATCH if missing
+            has = conn.execute(text("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME=:t AND COLUMN_NAME='ALLOC_BATCH'"), {"t": table_name}).scalar()
+            if not has:
+                conn.execute(text(f"ALTER TABLE dbo.{table_name} ADD [ALLOC_BATCH] VARCHAR(20) NULL"))
+                conn.commit()
+            # Migrate MATERIAL NO from VARCHAR to BIGINT if needed
+            dtype = conn.execute(text(
+                "SELECT DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME=:t AND COLUMN_NAME='MATERIAL NO'"
+            ), {"t": table_name}).scalar()
+            if dtype and dtype.lower() in ('varchar', 'nvarchar', 'char', 'nchar'):
+                conn.execute(text(f"ALTER TABLE dbo.{table_name} ALTER COLUMN [MATERIAL NO] BIGINT"))
+                conn.commit()
 
     save_df = output_df.copy()
+    # Ensure MATERIAL NO is numeric before saving
+    save_df["MATERIAL NO"] = pd.to_numeric(save_df["MATERIAL NO"], errors="coerce").astype("Int64")
     save_df.to_sql(table_name, engine, if_exists="append", index=False, schema="dbo")
     return True
 
@@ -315,8 +379,9 @@ def _save_to_db_without_pending(output_df: pd.DataFrame, engine):
                     [Serial No]          INT,
                     [Allocation Date]    VARCHAR(20),
                     [Allocation Number]  VARCHAR(50),
+                    [ALLOC_BATCH]        VARCHAR(20),
                     [VENDOR]             VARCHAR(50),
-                    [MATERIAL NO]        VARCHAR(50),
+                    [MATERIAL NO]        BIGINT,
                     [BDC-QTY]            INT,
                     [RECEIVING STORE]    VARCHAR(20),
                     [Picking Date]       VARCHAR(20),
@@ -325,22 +390,105 @@ def _save_to_db_without_pending(output_df: pd.DataFrame, engine):
                 )
             """))
             conn.commit()
+        else:
+            has = conn.execute(text("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME=:t AND COLUMN_NAME='ALLOC_BATCH'"), {"t": table_name}).scalar()
+            if not has:
+                conn.execute(text(f"ALTER TABLE dbo.{table_name} ADD [ALLOC_BATCH] VARCHAR(20) NULL"))
+                conn.commit()
+            # Migrate MATERIAL NO to BIGINT
+            dtype = conn.execute(text(
+                "SELECT DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME=:t AND COLUMN_NAME='MATERIAL NO'"
+            ), {"t": table_name}).scalar()
+            if dtype and dtype.lower() in ('varchar', 'nvarchar', 'char', 'nchar'):
+                conn.execute(text(f"ALTER TABLE dbo.{table_name} ALTER COLUMN [MATERIAL NO] BIGINT"))
+                conn.commit()
 
     save_df = output_df.copy()
+    save_df["MATERIAL NO"] = pd.to_numeric(save_df["MATERIAL NO"], errors="coerce").astype("Int64")
     save_df.to_sql(table_name, engine, if_exists="append", index=False, schema="dbo")
     return True
 
 
-def _ensure_delivery_order_column(conn, table_name: str):
-    """Add DELIVERY_ORDER column to table if it doesn't exist."""
+def _rebuild_pend_alc(engine):
+    """Rebuild ARS_pend_alc = BDC total qty minus DO total qty, aggregated by RDC+ST_CD+MATNR."""
+    with engine.connect() as conn:
+        # Check if DO_QTY column exists
+        has_do_qty = conn.execute(text(
+            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='ARS_ALLOCATION_MASTER' AND COLUMN_NAME='DO_QTY'"
+        )).scalar()
+
+        if has_do_qty:
+            conn.execute(text("""
+                IF OBJECT_ID('ARS_pend_alc','U') IS NOT NULL DROP TABLE ARS_pend_alc;
+                SELECT
+                    a.[VENDOR] AS RDC,
+                    a.[RECEIVING STORE] AS ST_CD,
+                    CAST(a.[MATERIAL NO] AS BIGINT) AS MATNR,
+                    SUM(a.[BDC-QTY]) - ISNULL(SUM(a.[DO_QTY]), 0) AS QTY
+                INTO ARS_pend_alc
+                FROM dbo.ARS_ALLOCATION_MASTER a WITH (NOLOCK)
+                GROUP BY a.[VENDOR], a.[RECEIVING STORE], a.[MATERIAL NO]
+                HAVING SUM(a.[BDC-QTY]) - ISNULL(SUM(a.[DO_QTY]), 0) > 0
+            """))
+        else:
+            # No DO_QTY yet — all BDC qty is pending
+            conn.execute(text("""
+                IF OBJECT_ID('ARS_pend_alc','U') IS NOT NULL DROP TABLE ARS_pend_alc;
+                SELECT
+                    [VENDOR] AS RDC,
+                    [RECEIVING STORE] AS ST_CD,
+                    CAST([MATERIAL NO] AS BIGINT) AS MATNR,
+                    SUM([BDC-QTY]) AS QTY
+                INTO ARS_pend_alc
+                FROM dbo.ARS_ALLOCATION_MASTER WITH (NOLOCK)
+                GROUP BY [VENDOR], [RECEIVING STORE], [MATERIAL NO]
+                HAVING SUM([BDC-QTY]) > 0
+            """))
+        conn.commit()
+
+
+def _update_do_qty(output_df: pd.DataFrame, engine):
+    """Bulk update DO_QTY in ARS_ALLOCATION_MASTER using temp table + single UPDATE."""
+    table_name = "ARS_ALLOCATION_MASTER"
+    with engine.connect() as conn:
+        exists = conn.execute(text(
+            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME=:tbl AND COLUMN_NAME='DO_QTY'"
+        ), {"tbl": table_name}).scalar()
+        if not exists:
+            conn.execute(text(f"ALTER TABLE dbo.{table_name} ADD [DO_QTY] INT NULL DEFAULT 0"))
+            conn.commit()
+
+    # Aggregate by keys
+    key_cols = ['Allocation Number', 'VENDOR', 'MATERIAL NO', 'RECEIVING STORE']
+    qty_col = 'BDC-QTY' if 'BDC-QTY' in output_df.columns else 'DO_QTY'
+    agg = output_df.groupby(key_cols)[qty_col].sum().reset_index()
+    agg.columns = ['alloc_no', 'vendor', 'material', 'store', 'qty']
+
+    # Bulk update via temp table
+    tmp = "##do_qty_tmp"
+    agg.to_sql(tmp, engine, if_exists="replace", index=False)
+    with engine.connect() as conn:
+        conn.execute(text(f"""
+            UPDATE a SET a.[DO_QTY] = ISNULL(a.[DO_QTY], 0) + t.[qty]
+            FROM dbo.{table_name} a
+            INNER JOIN {tmp} t ON a.[Allocation Number] = t.[alloc_no]
+                AND a.[VENDOR] = t.[vendor]
+                AND a.[MATERIAL NO] = t.[material]
+                AND a.[RECEIVING STORE] = t.[store]
+        """))
+        conn.execute(text(f"DROP TABLE {tmp}"))
+        conn.commit()
+
+
+def _ensure_do_qty_column(conn, table_name: str):
+    """Add DO_QTY column to table if it doesn't exist."""
     result = conn.execute(text("""
         SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-        WHERE TABLE_NAME = :tbl AND COLUMN_NAME = 'DELIVERY_ORDER'
+        WHERE TABLE_NAME = :tbl AND COLUMN_NAME = 'DO_QTY'
     """), {"tbl": table_name})
     if result.scalar() == 0:
-        conn.execute(text(f"ALTER TABLE dbo.{table_name} ADD [DELIVERY_ORDER] VARCHAR(20) NULL"))
+        conn.execute(text(f"ALTER TABLE dbo.{table_name} ADD [DO_QTY] INT NULL DEFAULT 0"))
         conn.commit()
-        logger.info(f"Added DELIVERY_ORDER column to {table_name}")
 
 
 # ===================== BDC Upload Endpoints =====================
@@ -372,16 +520,23 @@ async def upload_and_process_bdc(
         engine = get_data_engine()
         is_auto_save = auto_save.lower() == "true"
 
-        allocation_no = str(_get_next_allocation_no(engine)) if is_auto_save else ""
-        result = _process_bdc(df, engine, allocation_no=allocation_no)
+        if is_auto_save:
+            allocation_no = _get_next_allocation_no(engine)
+            batch_no = _get_next_batch_no(engine)
+        else:
+            allocation_no = ""
+            batch_no = ""
+        result = _process_bdc(df, engine, allocation_no=allocation_no, alloc_batch=batch_no)
 
         saved = False
         if is_auto_save and result["total_rows"] > 0:
-            _save_to_db(result["_full_data"], engine)
+            full_data = result["_full_data"]
+            _save_to_db(full_data, engine)
             wp_data = result["_full_data_without_pending"]
             if len(wp_data) > 0:
                 _save_to_db_without_pending(wp_data, engine)
-                logger.info(f"BDC saved {len(wp_data)} rows to ARS_ALLOCATION_MASTER_WITHOUT_PENDING")
+            # Track in ARS_pend_alc (BDC done, DO pending)
+            _rebuild_pend_alc(engine)
             saved = True
 
         result.pop("_full_data", None)
@@ -424,18 +579,24 @@ async def save_bdc_to_db(
             raise HTTPException(status_code=400, detail=f"Missing required columns: {', '.join(missing)}")
 
         engine = get_data_engine()
-        allocation_no = str(_get_next_allocation_no(engine))
-        result = _process_bdc(df, engine, allocation_no=allocation_no)
+        allocation_no = _get_next_allocation_no(engine)
+        batch_no = _get_next_batch_no(engine)
+        result = _process_bdc(df, engine, allocation_no=allocation_no, alloc_batch=batch_no)
 
         if result["total_rows"] == 0:
             raise HTTPException(status_code=400, detail="No rows to save after processing")
 
-        _save_to_db(result["_full_data"], engine)
+        full_data = result["_full_data"]
+        _save_to_db(full_data, engine)
         wp_data = result["_full_data_without_pending"]
         if len(wp_data) > 0:
             _save_to_db_without_pending(wp_data, engine)
 
-        return {"success": True, "saved_rows": result["total_rows"], "allocation_no": allocation_no}
+        # Update ARS_pend_alc with BDC records (BDC done, DO pending)
+        _rebuild_pend_alc(engine)
+
+        return {"success": True, "saved_rows": result["total_rows"],
+                "allocation_no": str(allocation_no)}
 
     except HTTPException:
         raise
@@ -473,9 +634,12 @@ async def download_bdc(
         engine = get_data_engine()
         result = _process_bdc(df, engine, allocation_no=allocation_no.strip())
         output_df = result["_full_data"]
+        # Exclude ALLOC_BATCH from export (internal reference only, not for SAP)
+        export_cols = [c for c in output_df.columns if c != 'ALLOC_BATCH']
+        export_df = output_df[export_cols]
 
         buffer = io.StringIO()
-        output_df.to_csv(buffer, index=False)
+        export_df.to_csv(buffer, index=False)
         buffer.seek(0)
 
         return StreamingResponse(
@@ -497,15 +661,16 @@ async def download_bdc(
 
 @router.post("/delivery-order-upload")
 async def upload_delivery_order(
-    file: UploadFile = File(..., description="CSV or Excel file with DELIVERY_ORDER status"),
-    sheet_name: Optional[str] = Form(None, description="Excel sheet name (optional)"),
+    file: UploadFile = File(..., description="CSV or Excel file with DO_QTY"),
+    sheet_name: Optional[str] = Form(None),
     current_user: User = Depends(get_current_user),
     db=Depends(get_data_db),
 ):
     """
-    Upload file to update DELIVERY_ORDER column in ARS_ALLOCATION_MASTER.
-    File must have: VENDOR, RECEIVING STORE, MATERIAL NO, Allocation Number, DELIVERY_ORDER
-    Matches rows and sets DELIVERY_ORDER. Column is auto-created if missing.
+    Upload file to update DO_QTY in ARS_ALLOCATION_MASTER.
+    Match on: VENDOR, RECEIVING STORE, MATERIAL NO, Allocation Number.
+    Set: DO_QTY = uploaded value.
+    Then rebuild ARS_pend_alc.
     """
     try:
         content = await file.read()
@@ -513,62 +678,83 @@ async def upload_delivery_order(
             raise HTTPException(status_code=400, detail="File is empty")
 
         df = _read_file_to_df(content, file.filename, sheet_name)
-
         if df.empty:
             raise HTTPException(status_code=400, detail="File contains no data rows")
 
-        required = {"VENDOR", "RECEIVING STORE", "MATERIAL NO", "Allocation Number", "DELIVERY_ORDER"}
+        required = {"VENDOR", "RECEIVING STORE", "MATERIAL NO", "Allocation Number", "DO_QTY"}
         missing = required - set(df.columns)
         if missing:
             raise HTTPException(status_code=400, detail=f"Missing required columns: {', '.join(missing)}")
-
-        df["DELIVERY_ORDER"] = df["DELIVERY_ORDER"].astype(str).str.strip()
-        df["VENDOR"] = df["VENDOR"].astype(str).str.strip()
-        df["RECEIVING STORE"] = df["RECEIVING STORE"].astype(str).str.strip()
-        df["MATERIAL NO"] = df["MATERIAL NO"].astype(str).str.strip()
-        df["Allocation Number"] = df["Allocation Number"].astype(str).str.strip()
 
         engine = get_data_engine()
         table_name = "ARS_ALLOCATION_MASTER"
 
         with engine.connect() as conn:
-            result = conn.execute(text(
-                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = :tbl"
-            ), {"tbl": table_name})
-            if result.scalar() == 0:
-                raise HTTPException(status_code=404, detail="ARS_ALLOCATION_MASTER table does not exist. Upload BDC data first.")
+            if conn.execute(text("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME=:t"), {"t": table_name}).scalar() == 0:
+                raise HTTPException(status_code=404, detail="ARS_ALLOCATION_MASTER does not exist")
+            _ensure_do_qty_column(conn, table_name)
 
-            _ensure_delivery_order_column(conn, table_name)
+        # Clean data — all as strings for safe matching
+        do_df = df[["VENDOR", "RECEIVING STORE", "MATERIAL NO", "Allocation Number", "DO_QTY"]].copy()
+        do_df["VENDOR"] = do_df["VENDOR"].astype(str).str.strip()
+        do_df["RECEIVING STORE"] = do_df["RECEIVING STORE"].astype(str).str.strip()
+        do_df["MATERIAL NO"] = do_df["MATERIAL NO"].astype(str).str.strip().str.split('.').str[0]  # remove .0
+        do_df["Allocation Number"] = do_df["Allocation Number"].astype(str).str.strip()
+        do_df["DO_QTY"] = pd.to_numeric(do_df["DO_QTY"], errors="coerce").fillna(0).clip(-2147483647, 2147483647).astype(int)
 
-            updated_count = 0
-            not_found_count = 0
+        # Use raw pyodbc: create temp table → bulk insert → single UPDATE JOIN
+        raw_conn = engine.raw_connection()
+        try:
+            cursor = raw_conn.cursor()
+            cursor.fast_executemany = True
 
-            for _, row in df.iterrows():
-                res = conn.execute(
-                    text(f"""
-                        UPDATE dbo.{table_name}
-                        SET [DELIVERY_ORDER] = :delivery_order
-                        WHERE [VENDOR] = :vendor
-                          AND [RECEIVING STORE] = :store
-                          AND [MATERIAL NO] = :material
-                          AND [Allocation Number] = :alloc_no
-                    """),
-                    {
-                        "delivery_order": row["DELIVERY_ORDER"],
-                        "vendor": row["VENDOR"],
-                        "store": row["RECEIVING STORE"],
-                        "material": row["MATERIAL NO"],
-                        "alloc_no": row["Allocation Number"],
-                    }
+            # 1. Create temp table — all NVARCHAR for safe comparison
+            cursor.execute("""
+                CREATE TABLE ##do_update (
+                    v NVARCHAR(50), s NVARCHAR(50), m NVARCHAR(50), a NVARCHAR(50), q INT
                 )
-                if res.rowcount > 0:
-                    updated_count += res.rowcount
-                else:
-                    not_found_count += 1
+            """)
 
-            conn.commit()
+            # 2. Bulk insert
+            rows = list(zip(
+                do_df["VENDOR"].tolist(),
+                do_df["RECEIVING STORE"].tolist(),
+                do_df["MATERIAL NO"].tolist(),
+                do_df["Allocation Number"].tolist(),
+                do_df["DO_QTY"].tolist(),
+            ))
+            cursor.executemany("INSERT INTO ##do_update(v,s,m,a,q) VALUES(?,?,?,?,?)", rows)
 
-        logger.info(f"DELIVERY_ORDER upload: {updated_count} updated, {not_found_count} not matched")
+            # 3. Check sample for debug
+            cursor.execute(f"SELECT TOP 2 [VENDOR],[RECEIVING STORE],CAST([MATERIAL NO] AS NVARCHAR(50)),[Allocation Number] FROM dbo.{table_name}")
+            logger.info(f"DO DB sample: {cursor.fetchall()}")
+            cursor.execute("SELECT TOP 2 v,s,m,a FROM ##do_update")
+            logger.info(f"DO File sample: {cursor.fetchall()}")
+
+            # 4. UPDATE JOIN — all comparisons as NVARCHAR
+            cursor.execute(f"""
+                UPDATE t
+                SET t.[DO_QTY] = CAST(u.q AS INT)
+                FROM dbo.{table_name} t
+                INNER JOIN ##do_update u
+                    ON LTRIM(RTRIM(CAST(t.[VENDOR] AS NVARCHAR(50)))) = LTRIM(RTRIM(u.v))
+                    AND LTRIM(RTRIM(CAST(t.[RECEIVING STORE] AS NVARCHAR(50)))) = LTRIM(RTRIM(u.s))
+                    AND LTRIM(RTRIM(CAST(t.[MATERIAL NO] AS NVARCHAR(50)))) = LTRIM(RTRIM(u.m))
+                    AND LTRIM(RTRIM(CAST(t.[Allocation Number] AS NVARCHAR(50)))) = LTRIM(RTRIM(u.a))
+            """)
+            updated_count = cursor.rowcount
+            logger.info(f"DO updated: {updated_count}")
+
+            # 5. Cleanup
+            cursor.execute("DROP TABLE ##do_update")
+            raw_conn.commit()
+        finally:
+            raw_conn.close()
+
+        not_found_count = len(do_df) - updated_count if updated_count < len(do_df) else 0
+
+        # Rebuild ARS_pend_alc
+        _rebuild_pend_alc(engine)
 
         return {
             "success": True,
@@ -582,8 +768,8 @@ async def upload_delivery_order(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"DELIVERY_ORDER upload error: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to update DELIVERY_ORDER: {str(e)}")
+        logger.error(f"DO_QTY upload error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to update DO_QTY: {str(e)}")
 
 
 # ===================== Sequences =====================
@@ -605,21 +791,37 @@ async def get_bdc_sequences(
             if result.scalar() == 0:
                 return {"sequences": []}
 
-            result = conn.execute(text(f"""
-                SELECT
-                    [Allocation Number],
-                    MIN([Allocation Date]) AS alloc_date,
-                    MIN([VENDOR]) AS vendor,
-                    COUNT(*) AS total_rows,
-                    SUM([BDC-QTY]) AS total_qty,
-                    MIN([CREATED_AT]) AS created_at
-                FROM dbo.{table_name}
-                GROUP BY [Allocation Number]
-                ORDER BY
-                    CASE WHEN ISNUMERIC([Allocation Number]) = 1
-                         THEN CAST([Allocation Number] AS INT)
-                         ELSE 0 END DESC
-            """))
+            # Check if ALLOC_BATCH column exists
+            has_batch = conn.execute(text(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME=:t AND COLUMN_NAME='ALLOC_BATCH'"
+            ), {"t": table_name}).scalar()
+
+            if has_batch:
+                result = conn.execute(text(f"""
+                    SELECT
+                        ISNULL([ALLOC_BATCH], [Allocation Number]) AS batch_key,
+                        MIN([Allocation Date]) AS alloc_date,
+                        COUNT(DISTINCT [RECEIVING STORE]) AS store_count,
+                        COUNT(*) AS total_rows,
+                        SUM([BDC-QTY]) AS total_qty,
+                        MIN([CREATED_AT]) AS created_at
+                    FROM dbo.{table_name} WITH (NOLOCK)
+                    GROUP BY ISNULL([ALLOC_BATCH], [Allocation Number])
+                    ORDER BY MIN([CREATED_AT]) DESC
+                """))
+            else:
+                result = conn.execute(text(f"""
+                    SELECT
+                        [Allocation Number] AS batch_key,
+                        MIN([Allocation Date]) AS alloc_date,
+                        COUNT(DISTINCT [RECEIVING STORE]) AS store_count,
+                        COUNT(*) AS total_rows,
+                        SUM([BDC-QTY]) AS total_qty,
+                        MIN([CREATED_AT]) AS created_at
+                    FROM dbo.{table_name} WITH (NOLOCK)
+                    GROUP BY [Allocation Number]
+                    ORDER BY MIN([CREATED_AT]) DESC
+                """))
             rows = result.fetchall()
 
             sequences = []
@@ -627,7 +829,7 @@ async def get_bdc_sequences(
                 sequences.append({
                     "allocation_no": r[0],
                     "alloc_date": str(r[1]) if r[1] else "",
-                    "vendor": r[2] or "",
+                    "stores": r[2] or 0,
                     "total_rows": r[3],
                     "total_qty": r[4],
                     "created_at": str(r[5]) if r[5] else "",
@@ -659,25 +861,44 @@ async def delete_bdc_sequence(
             if result.scalar() == 0:
                 raise HTTPException(status_code=404, detail="Table does not exist")
 
-            result = conn.execute(
-                text(f"DELETE FROM dbo.{table_name} WHERE [Allocation Number] = :alloc_no"),
-                {"alloc_no": allocation_no},
-            )
+            # Delete by ALLOC_BATCH or Allocation Number
+            has_batch = conn.execute(text(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME=:t AND COLUMN_NAME='ALLOC_BATCH'"
+            ), {"t": table_name}).scalar()
+
+            if has_batch:
+                result = conn.execute(
+                    text(f"DELETE FROM dbo.{table_name} WHERE [ALLOC_BATCH] = :key OR [Allocation Number] = :key"),
+                    {"key": allocation_no})
+            else:
+                result = conn.execute(
+                    text(f"DELETE FROM dbo.{table_name} WHERE [Allocation Number] = :key"),
+                    {"key": allocation_no})
             deleted = result.rowcount
 
-            # Also delete from ARS_ALLOCATION_MASTER_WITHOUT_PENDING if it exists
+            # Also delete from WITHOUT_PENDING
             wp_exists = conn.execute(text(
                 "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = :tbl"
             ), {"tbl": wp_table}).scalar()
             wp_deleted = 0
             if wp_exists > 0:
-                wp_result = conn.execute(
-                    text(f"DELETE FROM dbo.{wp_table} WHERE [Allocation Number] = :alloc_no"),
-                    {"alloc_no": allocation_no},
-                )
+                if has_batch:
+                    wp_result = conn.execute(
+                        text(f"DELETE FROM dbo.{wp_table} WHERE [ALLOC_BATCH] = :key OR [Allocation Number] = :key"),
+                        {"key": allocation_no})
+                else:
+                    wp_result = conn.execute(
+                        text(f"DELETE FROM dbo.{wp_table} WHERE [Allocation Number] = :key"),
+                        {"key": allocation_no})
                 wp_deleted = wp_result.rowcount
 
             conn.commit()
+
+            # Rebuild pend_alc after delete
+            try:
+                _rebuild_pend_alc(engine)
+            except Exception:
+                pass
 
         logger.info(f"Deleted allocation #{allocation_no}: {deleted} from MASTER, {wp_deleted} from WITHOUT_PENDING")
 

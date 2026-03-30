@@ -797,7 +797,7 @@ export default function UploadPage() {
                 </>
               )}
             </div>
-            <div className="grid grid-cols-4 gap-4">
+            <div className="grid grid-cols-5 gap-4">
               {mode === 'delete' ? (
                 <>
                   <div className="text-center">
@@ -819,13 +819,14 @@ export default function UploadPage() {
                 </>
               ) : (
                 [
-                  { l: 'Total Records', v: result.total_records },
-                  { l: 'Inserted', v: result.inserted },
-                  { l: 'Updated', v: result.updated },
-                  { l: 'Errors', v: result.errors },
+                  { l: 'Total Records', v: result.total_records, color: 'text-gray-900' },
+                  { l: 'Inserted', v: result.inserted, color: 'text-green-600' },
+                  { l: 'Updated', v: result.updated, color: 'text-blue-600' },
+                  { l: 'Unchanged', v: result.unchanged, color: 'text-gray-400' },
+                  { l: 'Errors', v: result.errors, color: 'text-red-600' },
                 ].map(s => (
                   <div key={s.l} className="text-center">
-                    <div className="text-2xl font-bold text-gray-900">{s.v?.toLocaleString() || 0}</div>
+                    <div className={`text-2xl font-bold ${s.color}`}>{s.v?.toLocaleString() || 0}</div>
                     <div className="text-xs text-gray-500">{s.l}</div>
                   </div>
                 ))

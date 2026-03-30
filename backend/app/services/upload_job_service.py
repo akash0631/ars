@@ -160,18 +160,20 @@ def _worker_loop():
 
 
 def _read_file(file_path: str, skip_rows: int = 0, sheet_name: Optional[str] = None) -> pd.DataFrame:
-    """Read CSV or Excel file into DataFrame."""
+    """Read CSV or Excel file into DataFrame.
+    keep_default_na=False so that 'NA' is kept as the string 'NA', not treated as NaN."""
     ext = os.path.splitext(file_path)[1].lower()
-    
+
     if ext == '.csv':
-        return pd.read_csv(file_path, skiprows=skip_rows, dtype=str, encoding='utf-8', na_values=[''])
+        return pd.read_csv(file_path, skiprows=skip_rows, dtype=str, encoding='utf-8',
+                           keep_default_na=False, na_values=[])
     elif ext in ('.xlsx', '.xls'):
         return pd.read_excel(
             file_path,
             sheet_name=sheet_name or 0,
             skiprows=skip_rows,
             dtype=str,
-            na_values=[''],
+            keep_default_na=False, na_values=[],
             engine='openpyxl' if ext == '.xlsx' else 'xlrd'
         )
     else:
@@ -179,18 +181,21 @@ def _read_file(file_path: str, skip_rows: int = 0, sheet_name: Optional[str] = N
 
 
 def _clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    """Clean DataFrame before upsert."""
-    for col in df.select_dtypes(include=["object"]).columns:
-        cleaned = df[col].where(~df[col].isna(), "__SKIP__").astype(str).str.strip()
-        cleaned = cleaned.replace({
-            "nan": "__SKIP__",
-            "None": "__SKIP__",
-            "": "__SKIP__",
-            "NaT": "__SKIP__",
-            "-": "__NULL__",
-            "|": "__NULL__",
-        })
-        df[col] = cleaned
+    """Clean DataFrame before upsert.
+
+    Rules:
+    - Blank/empty → __SKIP__  (ignore, keep existing DB value)
+    - 'NA' string → kept as 'NA' (update DB with string 'NA')
+    - '|' symbol  → __NULL__  (set DB value to NULL)
+    - '-' symbol  → __NULL__  (set DB value to NULL)
+    """
+    for col in df.columns:
+        raw = df[col].astype(str)
+        stripped = raw.str.strip()
+        result = raw.copy()
+        result[stripped.isin(["", "nan", "None", "NaT"])] = "__SKIP__"
+        result[stripped.isin(["|", "-"])] = "__NULL__"
+        df[col] = result
     return df
 
 

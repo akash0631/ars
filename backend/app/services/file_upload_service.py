@@ -119,15 +119,25 @@ class FileUploadService:
                 f"Available columns: {list(df.columns)}"
             )
 
-        # Drop rows where PK is null
-        pk_null_mask = df[primary_key_columns].isna().any(axis=1)
+        # Drop rows where PK is null or blank
+        pk_null_mask = pd.Series(False, index=df.index)
+        for pk in primary_key_columns:
+            col = df[pk]
+            pk_null_mask = pk_null_mask | col.isna() | (col.astype(str).str.strip() == "")
         null_pk_count = pk_null_mask.sum()
         if null_pk_count > 0:
-            logger.warning(f"[{batch_id}] Dropping {null_pk_count} rows with null PKs")
+            logger.warning(f"[{batch_id}] Dropping {null_pk_count} rows with null/blank PKs")
             df = df[~pk_null_mask]
 
         # Clean data
         df = self._clean_dataframe(df)
+
+        # Ensure PK columns are never __SKIP__ or __NULL__ after cleaning
+        for pk in primary_key_columns:
+            bad_pk = df[pk].isin(["__SKIP__", "__NULL__"])
+            if bad_pk.any():
+                logger.warning(f"[{batch_id}] Dropping {bad_pk.sum()} rows with blank/null PK '{pk}'")
+                df = df[~bad_pk]
 
         # Execute upsert
 
@@ -446,12 +456,17 @@ class FileUploadService:
         if nrows:
             read_kwargs["nrows"] = nrows
 
+        # keep_default_na=False: prevent pandas from treating "NA" as NaN.
+        # "NA" should be stored as the string "NA" in the database.
+        # Blank cells are still detected as NaN via our own cleaning logic.
         if ext == ".csv":
             # Try common encodings
             for encoding in ["utf-8", "latin-1", "cp1252"]:
                 try:
                     buffer.seek(0)
-                    return pd.read_csv(buffer, encoding=encoding, **read_kwargs)
+                    return pd.read_csv(buffer, encoding=encoding,
+                                       keep_default_na=False, na_values=[],
+                                       **read_kwargs)
                 except (UnicodeDecodeError, pd.errors.ParserError):
                     continue
             raise ValueError("Could not read CSV with any supported encoding")
@@ -461,6 +476,7 @@ class FileUploadService:
                 buffer,
                 sheet_name=sheet_name or 0,
                 engine="openpyxl" if ext == ".xlsx" else None,
+                keep_default_na=False, na_values=[],
                 **read_kwargs,
             )
 
@@ -469,40 +485,23 @@ class FileUploadService:
     def _clean_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Clean DataFrame before upsert.
-        
-        Special handling:
-        - Blank/empty cells: marked as __SKIP__ (will not update existing value)
-        - '-' or '|' symbols: converted to NULL (will set DB value to NULL)
-        """
-        # Vectorized cleaning for object columns (much faster than apply)
-        for col in df.select_dtypes(include=["object"]).columns:
-            # Replace NaN with __SKIP__, convert to string, and strip
-            cleaned = df[col].where(~df[col].isna(), "__SKIP__").astype(str).str.strip()
-            
-            # Replace empty/null representations with __SKIP__ and special chars with __NULL__
-            cleaned = cleaned.replace({
-                "nan": "__SKIP__",
-                "None": "__SKIP__",
-                "": "__SKIP__",
-                "NaT": "__SKIP__",
-                "-": "__NULL__",
-                "|": "__NULL__",
-            })
-            
-            df[col] = cleaned
 
-        # Convert numeric-looking strings (optional, can be skipped for speed)
+        Rules:
+        - Blank/empty cells: __SKIP__  (ignore, keep existing DB value)
+        - "NA" string:       kept as "NA" (update DB with the string "NA")
+        - "|" symbol:        __NULL__  (set DB value to NULL)
+        - "-" symbol:        __NULL__  (set DB value to NULL)
+        - Everything else:   treated as a normal value
+        """
         for col in df.columns:
-            if df[col].dtype == "object":
-                # Skip columns that have special markers
-                if df[col].isin(["__SKIP__", "__NULL__"]).any():
-                    continue
-                try:
-                    numeric = pd.to_numeric(df[col], errors="coerce")
-                    # Only convert if >80% values are numeric
-                    if numeric.notna().sum() > 0.8 * df[col].notna().sum():
-                        df[col] = numeric
-                except Exception:
-                    pass
+            raw = df[col].astype(str)
+            stripped = raw.str.strip()
+            result = raw.copy()
+            # Only blank → skip (no change in DB)
+            result[stripped.isin(["", "nan", "None", "NaT"])] = "__SKIP__"
+            # | and - → NULL in DB
+            result[stripped.isin(["|", "-"])] = "__NULL__"
+            # Everything else: as-is (including "NA", spaces, etc.)
+            df[col] = result
 
         return df

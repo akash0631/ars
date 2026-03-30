@@ -228,44 +228,7 @@ export const settingsAPI = {
   deleteBackup: (filename) => api.delete(`/settings/backup/${filename}`),
 }
 
-// ============== Contribution Percentage Analysis ==============
-export const contributionAPI = {
-  // Presets
-  listPresets: () => api.get('/contribution/presets'),
-  getPreset: (name) => api.get(`/contribution/presets/${name}`),
-  createPreset: (data) => api.post('/contribution/presets', data),
-  updatePreset: (name, data) => api.put(`/contribution/presets/${name}`, data),
-  deletePreset: (name) => api.delete(`/contribution/presets/${name}`),
-  
-  // Mappings
-  listMappings: () => api.get('/contribution/mappings'),
-  getMapping: (name) => api.get(`/contribution/mappings/${name}`),
-  createMapping: (data) => api.post('/contribution/mappings', data),
-  updateMapping: (name, data) => api.put(`/contribution/mappings/${name}`, data),
-  deleteMapping: (name) => api.delete(`/contribution/mappings/${name}`),
-  
-  // Assignments
-  listAssignments: () => api.get('/contribution/assignments'),
-  getAssignment: (id) => api.get(`/contribution/assignments/${id}`),
-  createAssignment: (data) => api.post('/contribution/assignments', data),
-  updateAssignment: (id, data) => api.put(`/contribution/assignments/${id}`, data),
-  deleteAssignment: (id) => api.delete(`/contribution/assignments/${id}`),
-  
-  // Execution
-  calculate: (data) => api.post('/contribution/calculate', data),
-  getDynamicQuery: (params) => api.get('/contribution/dynamic-query', { params }),
-  getExecutionOptions: (groupingColumn) => api.get('/contribution/execution/options', { 
-    params: { 
-      grouping_column: groupingColumn
-    } 
-  }),
-  
-  // Export
-  export: (data) => api.post('/contribution/export', data),
-  downloadTable: (tableName) => `${API_BASE}/contribution/download/${tableName}`,
-  deleteTable: (tableName) => api.delete(`/contribution/tables/${tableName}`),
-  getSavedResults: () => api.get('/contribution/results'),
-}
+
 
 // ============== BDC Creation ==============
 export const bdcAPI = {
@@ -294,7 +257,7 @@ export const bdcAPI = {
   deliveryOrderUpload: (formData) =>
     api.post('/bdc/delivery-order-upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
-      timeout: 300000,
+      timeout: 600000,
     }),
 }
 
@@ -337,6 +300,43 @@ export const lookupArtMasterAPI = {
       responseType: 'blob',
       timeout: 300000,
     }),
+}
+
+// ============== Contribution Percentage v2 ==============
+export const contribAPI = {
+  // Config
+  getGroupingColumns: ()    => api.get('/contrib/config/grouping-columns'),
+  getMonths:          ()    => api.get('/contrib/config/months'),
+  getSsnValues:       ()    => api.get('/contrib/config/ssn-values'),
+  getMajcats:    (gc)       => api.get('/contrib/config/majcats', { params: { grouping_column: gc } }),
+  // Presets
+  listPresets:   ()         => api.get('/contrib/presets'),
+  savePreset:    (data)     => api.post('/contrib/presets', data),
+  deletePreset:  (name)     => api.delete(`/contrib/presets/${encodeURIComponent(name)}`),
+  reorderPresets:(seq)      => api.put('/contrib/presets/reorder', { sequence: seq }),
+  // Mappings
+  listMappings:  ()         => api.get('/contrib/mappings'),
+  saveMapping:   (data)     => api.post('/contrib/mappings', data),
+  deleteMapping: (name)     => api.delete(`/contrib/mappings/${encodeURIComponent(name)}`),
+  // Assignments
+  listAssignments: ()       => api.get('/contrib/assignments'),
+  saveAssignment:  (data)   => api.post('/contrib/assignments', data),
+  deleteAssignment:(id)     => api.delete(`/contrib/assignments/${id}`),
+  // Execute (creates background job)
+  execute: (data)           => api.post('/contrib/execute', data),
+  // Jobs
+  listJobs:    ()           => api.get('/contrib/jobs'),
+  getJob:      (id)         => api.get(`/contrib/jobs/${id}`),
+  cancelJob:   (id)         => api.post(`/contrib/jobs/${id}/cancel`),
+  deleteJob:   (id)         => api.delete(`/contrib/jobs/${id}`),
+  pauseJob:    (id)         => api.post(`/contrib/jobs/${id}/pause`),
+  resumeJob:   (id)         => api.post(`/contrib/jobs/${id}/resume`),
+  downloadJobResult: (id, type) => api.get(`/contrib/jobs/${id}/download/${type}`, { responseType: 'blob', timeout: 600000 }),
+  // Review
+  listTables:    ()         => api.get('/contrib/review/tables'),
+  previewTable:  (name, limit=500) => api.get(`/contrib/review/preview/${encodeURIComponent(name)}`, { params: { limit } }),
+  downloadTable: (name)     => api.get(`/contrib/review/download/${encodeURIComponent(name)}`, { responseType: 'blob', timeout: 300000 }),
+  deleteTable:   (name)     => api.delete(`/contrib/review/tables/${encodeURIComponent(name)}`),
 }
 
 export default api

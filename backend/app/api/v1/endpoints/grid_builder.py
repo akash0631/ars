@@ -180,12 +180,27 @@ def _build_and_run_grid(engine, grid: dict) -> dict:
             ORDER BY STK.SLOC ASC
         """)).fetchall()
 
-    slocs = [r[0] for r in sloc_rows if r[0]]
-    if not slocs:
+        # Include PEND_ALC if active in settings and table exists
+        pend_row = conn.execute(text(
+            "SELECT S.SLOC, S.KPI FROM ARS_STORE_SLOC_SETTINGS S WHERE S.SLOC='PEND_ALC' AND UPPER(S.STATUS)='ACTIVE'"
+        )).fetchone()
+        if pend_row:
+            pend_table_exists = conn.execute(text(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME='ARS_pend_alc'"
+            )).scalar() > 0
+            if pend_table_exists:
+                sloc_rows = list(sloc_rows) + [(pend_row[0], pend_row[1])]
+
+    sloc_kpi_pairs = [(r[0], (r[1] or '').upper()) for r in sloc_rows if r[0]]
+    if not sloc_kpi_pairs:
         return {"rows": 0, "error": "No ACTIVE SLOCs found matching the criteria"}
 
+    # Sort SLOCs by KPI group → same KPI SLOCs are together, then alphabetical within group
+    sloc_kpi_pairs.sort(key=lambda x: (x[1] or 'ZZZ', x[0]))
+    slocs = [s for s, _ in sloc_kpi_pairs]
+
     # SLOCs where KPI = 'STK' → used for STK_TTL calculation
-    stk_slocs = [r[0] for r in sloc_rows if r[0] and r[1] and r[1].upper() == "STK"]
+    stk_slocs = [s for s, k in sloc_kpi_pairs if k == "STK"]
 
     # ── 2. Build quoted column lists ─────────────────────────────────────────
     q_slocs      = ", ".join(f"[{s}]" for s in slocs)
@@ -259,6 +274,41 @@ def _build_and_run_grid(engine, grid: dict) -> dict:
         # Truncate before inserting fresh data
         _run(conn, f"TRUNCATE TABLE [{out_table}]")
 
+        # Check if ARS_pend_alc exists and PEND_ALC is an active SLOC
+        pend_active = 'PEND_ALC' in [s.upper() for s in slocs]
+        has_pend_table = False
+        if pend_active:
+            has_pend_table = conn.execute(text(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME='ARS_pend_alc'"
+            )).scalar() > 0
+
+        pend_union = ""
+        if pend_active and has_pend_table:
+            # Build hierarchy select for pend_alc — join MATNR with vw_master_product
+            pend_hier_parts = []
+            for col in hier_cols:
+                cu = col.upper()
+                if cu == 'WERKS':
+                    pend_hier_parts.append(f"PA.[ST_CD] AS [{col}]")
+                elif cu in mp_cols_upper:
+                    actual = mp_cols_upper[cu]
+                    pend_hier_parts.append(f"MP2.[{actual}] AS [{col}]")
+                elif cu in stk_cols_upper:
+                    pend_hier_parts.append(f"NULL AS [{col}]")
+                else:
+                    pend_hier_parts.append(f"NULL AS [{col}]")
+            pend_hier_select = ", ".join(pend_hier_parts)
+
+            pend_union = f"""
+    UNION ALL
+    SELECT
+        {pend_hier_select},
+        'PEND_ALC' AS SLOC,
+        PA.QTY AS PARTICULARS_VALUE
+    FROM dbo.ARS_pend_alc PA
+    LEFT JOIN dbo.vw_master_product MP2 ON CAST(PA.MATNR AS NVARCHAR(50)) = MP2.ARTICLE_NUMBER
+"""
+
         insert_sql = f""";
 WITH Stock_CTE AS (
     SELECT
@@ -269,6 +319,7 @@ WITH Stock_CTE AS (
     {mp_join}
     INNER JOIN ARS_STORE_SLOC_SETTINGS S ON STK.SLOC = S.SLOC
     WHERE UPPER(S.STATUS) = 'ACTIVE'{kpi_clause}
+    {pend_union}
 )
 INSERT INTO [{out_table}] ({all_cols})
 SELECT
