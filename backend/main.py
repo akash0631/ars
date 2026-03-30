@@ -136,6 +136,15 @@ app.add_middleware(
 app.middleware("http")(request_logging_middleware)
 app.add_exception_handler(Exception, global_exception_handler)
 
+# Log 422 validation errors to terminal so we can debug
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request, exc):
+    logger.error(f"422 Validation Error on {request.method} {request.url.path}: {exc.errors()}")
+    return JSONResponse(status_code=422, content={"detail": exc.errors()})
+
 # ============================================================================
 # Routes
 # ============================================================================

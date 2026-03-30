@@ -45,13 +45,15 @@ class ChangePasswordRequest(BaseModel):
 # ============================================================================
 
 class UserCreate(BaseModel):
+    model_config = {"extra": "ignore"}
     username: str = Field(..., min_length=3, max_length=100)
-    email: Optional[EmailStr] = None
+    email: Optional[str] = None
     mobile_no: str = Field(..., min_length=10, max_length=15)
     password: str = Field(..., min_length=8)
     full_name: str = Field(..., min_length=2, max_length=200)
     employee_code: Optional[str] = None
     phone: Optional[str] = None
+    is_active: Optional[bool] = True
     role_ids: List[int] = Field(default_factory=list)
 
 

@@ -5,6 +5,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from typing import Optional
 
+from fastapi import Request
+from loguru import logger
+
 from app.database.session import get_db
 from app.schemas.auth import UserCreate, UserUpdate, UserResponse, UserListResponse
 from app.schemas.common import APIResponse
