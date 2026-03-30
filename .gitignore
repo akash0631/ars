@@ -31,6 +31,25 @@ logs/
 .DS_Store
 Thumbs.db
 
-# Uploads
+# Uploads & Exports
 uploads/
+backend/uploads/
+backend/exports/
 temp/
+
+# Node
+node_modules/
+frontend/node_modules/
+
+# Build output
+frontend/dist/
+frontend/build/
+
+# Database
+*.mdf
+*.ldf
+
+# Temp/cache
+*.pkl
+*.parquet
+__pycache__/
