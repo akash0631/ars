@@ -56,13 +56,14 @@ class UserCreate(BaseModel):
 
 
 class UserUpdate(BaseModel):
-    email: Optional[EmailStr] = None
+    email: Optional[str] = None
     mobile_no: Optional[str] = None
     full_name: Optional[str] = None
     employee_code: Optional[str] = None
     phone: Optional[str] = None
     is_active: Optional[bool] = None
     role_ids: Optional[List[int]] = None
+    password: Optional[str] = None
 
 
 class UserResponse(BaseModel):

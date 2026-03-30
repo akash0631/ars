@@ -224,6 +224,11 @@ class AuthService:
                     self.db.add(UserRole(user_id=user.id, role_id=role_id, assigned_by=updated_by))
             changed.append("roles")
 
+        # Reset password if provided (admin action)
+        if data.password and data.password.strip():
+            user.password_hash = hash_password(data.password.strip())
+            changed.append("password")
+
         user.updated_at = datetime.now(timezone.utc)
 
         if changed:
