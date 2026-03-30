@@ -56,6 +56,8 @@ class UserCreate(BaseModel):
 
 
 class UserUpdate(BaseModel):
+    model_config = {"extra": "ignore"}  # ignore extra fields like username
+    username: Optional[str] = None
     email: Optional[str] = None
     mobile_no: Optional[str] = None
     full_name: Optional[str] = None

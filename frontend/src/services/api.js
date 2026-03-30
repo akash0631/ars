@@ -66,6 +66,7 @@ export const usersAPI = {
   create: (data) => api.post('/users', data),
   update: (id, data) => api.put(`/users/${id}`, data),
   unlock: (id) => api.post(`/users/${id}/unlock`),
+  delete: (id) => api.delete(`/users/${id}`),
 }
 
 // ============== Roles ==============

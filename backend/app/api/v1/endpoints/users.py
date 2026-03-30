@@ -10,7 +10,7 @@ from app.schemas.auth import UserCreate, UserUpdate, UserResponse, UserListRespo
 from app.schemas.common import APIResponse
 from app.services.auth_service import AuthService
 from app.security.dependencies import get_current_user, RequirePermissions
-from app.models.rbac import User
+from app.models.rbac import User, UserRole
 
 router = APIRouter(prefix="/users", tags=["User Management"])
 
@@ -108,3 +108,29 @@ async def unlock_user(
         return APIResponse(message="User unlocked successfully")
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.delete(
+    "/{user_id}",
+    response_model=APIResponse,
+    dependencies=[Depends(RequirePermissions(["ADMIN_USERS_DELETE"]))],
+)
+async def delete_user(
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Delete a user (cannot delete superadmin or yourself)."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.username == "superadmin":
+        raise HTTPException(status_code=400, detail="Cannot delete superadmin")
+    if user.id == current_user.id:
+        raise HTTPException(status_code=400, detail="Cannot delete yourself")
+
+    # Remove role assignments
+    db.query(UserRole).filter(UserRole.user_id == user_id).delete()
+    db.delete(user)
+    db.commit()
+    return APIResponse(message=f"User '{user.username}' deleted")

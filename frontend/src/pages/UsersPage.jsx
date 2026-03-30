@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Plus, Search, Unlock, Edit2, X } from 'lucide-react'
+import { Plus, Search, Unlock, Edit2, X, Trash2 } from 'lucide-react'
 import { usersAPI, rolesAPI } from '@/services/api'
 import toast from 'react-hot-toast'
 
@@ -30,6 +30,12 @@ export default function UsersPage() {
 
   const handleUnlock = async (id) => {
     try { await usersAPI.unlock(id); toast.success('User unlocked'); load() } catch {}
+  }
+
+  const handleDelete = async (id, username) => {
+    if (!confirm(`Delete user "${username}"? This cannot be undone.`)) return
+    try { await usersAPI.delete(id); toast.success('User deleted'); load() }
+    catch (e) { toast.error(e.response?.data?.detail || 'Delete failed') }
   }
 
   return (
@@ -89,6 +95,9 @@ export default function UsersPage() {
                       <button onClick={() => setModal(u)} className="btn-ghost btn-sm p-1"><Edit2 size={14} /></button>
                       {u.is_locked && (
                         <button onClick={() => handleUnlock(u.id)} className="btn-ghost btn-sm p-1 text-amber-600"><Unlock size={14} /></button>
+                      )}
+                      {u.username !== 'superadmin' && (
+                        <button onClick={() => handleDelete(u.id, u.username)} className="btn-ghost btn-sm p-1 text-red-500"><Trash2 size={14} /></button>
                       )}
                     </div>
                   </td>
