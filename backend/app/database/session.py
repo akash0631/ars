@@ -140,6 +140,46 @@ def get_data_engine():
 
 
 # ============================================================================
+# Enable Read Committed Snapshot Isolation (RCSI)
+# ============================================================================
+def enable_rcsi():
+    """
+    Enable READ_COMMITTED_SNAPSHOT on both databases.
+    This is the #1 fix for 'DB locked during upsert' — readers use row versioning
+    instead of shared locks, so they NEVER block writers and vice versa.
+    This is a one-time DB setting that persists across restarts.
+    """
+    for label, eng in [("System", system_engine), ("Data", data_engine)]:
+        try:
+            db_name = None
+            with eng.connect() as conn:
+                db_name = conn.execute(text("SELECT DB_NAME()")).scalar()
+                is_rcsi = conn.execute(text(
+                    "SELECT is_read_committed_snapshot_on FROM sys.databases WHERE name = DB_NAME()"
+                )).scalar()
+                if is_rcsi:
+                    logger.info(f"{label} DB [{db_name}]: RCSI already enabled")
+                    continue
+
+            # Must run ALTER DATABASE outside of a transaction on a separate connection
+            # using autocommit mode
+            raw = eng.raw_connection()
+            raw.autocommit = True
+            try:
+                cursor = raw.cursor()
+                cursor.execute(f"ALTER DATABASE [{db_name}] SET READ_COMMITTED_SNAPSHOT ON")
+                cursor.close()
+                logger.info(f"{label} DB [{db_name}]: RCSI enabled successfully")
+            except Exception as e:
+                logger.warning(f"{label} DB [{db_name}]: Could not enable RCSI: {e}")
+            finally:
+                raw.close()
+
+        except Exception as e:
+            logger.warning(f"{label} DB: RCSI check failed: {e}")
+
+
+# ============================================================================
 # Health Checks
 # ============================================================================
 def check_db_connection() -> bool:
@@ -175,8 +215,14 @@ def set_system_connection_options(dbapi_connection, connection_record):
 
 @event.listens_for(data_engine, "connect")
 def set_data_connection_options(dbapi_connection, connection_record):
-    """Set connection-level options for data DB."""
-    pass
+    """Set connection-level options for data DB.
+    Use READ COMMITTED SNAPSHOT so readers never block writers and vice versa."""
+    try:
+        cursor = dbapi_connection.cursor()
+        cursor.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+        cursor.close()
+    except Exception:
+        pass
 
 
 @event.listens_for(system_engine, "checkout")

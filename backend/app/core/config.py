@@ -46,7 +46,7 @@ class Settings(BaseSettings):
 
     # File Upload
     MAX_UPLOAD_SIZE_MB: int = 100
-    UPLOAD_CHUNK_SIZE: int = 10000
+    UPLOAD_CHUNK_SIZE: int = 2000  # Smaller chunks to reduce DB lock duration
     ALLOWED_EXTENSIONS: str = ".csv,.xlsx,.xls"
 
     # Logging

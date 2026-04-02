@@ -423,36 +423,44 @@ async def upload_data(
             elif conflict_mode == "upsert":
                 pk_cols = _get_primary_keys(de, table_name)
                 if pk_cols:
-                    # Build MERGE statement
+                    # Staging table approach: bulk insert → UPDATE → INSERT
+                    # Much faster and non-blocking compared to MERGE
                     all_cols = [c for c in df.columns]
-                    on_clause = " AND ".join(
-                        [f"target.[{pk}] = source.[{pk}]" for pk in pk_cols]
-                    )
                     update_cols = [c for c in all_cols if c not in pk_cols]
-                    update_set = ", ".join(
-                        [f"target.[{c}] = source.[{c}]" for c in update_cols]
-                    )
-                    insert_cols = ", ".join([f"[{c}]" for c in all_cols])
-                    insert_vals = ", ".join([f"source.[{c}]" for c in all_cols])
 
-                    # Insert in chunks using a temp table approach
                     temp_table = f"#temp_{table_name}"
-                    # Write to temp table first
-                    df.to_sql(temp_table, de, if_exists="replace", index=False, chunksize=1000)
+                    df.to_sql(temp_table, de, if_exists="replace", index=False, chunksize=5000)
 
-                    merge_sql = f"""
-                        MERGE [{table_name}] AS target
-                        USING [{temp_table}] AS source
-                        ON {on_clause}
-                        WHEN MATCHED THEN
-                            UPDATE SET {update_set}
-                        WHEN NOT MATCHED THEN
-                            INSERT ({insert_cols}) VALUES ({insert_vals});
-                    """
-                    conn.execute(text(merge_sql))
+                    pk_join = " AND ".join(
+                        f"t.[{pk}] = s.[{pk}]" for pk in pk_cols
+                    )
+
+                    # UPDATE existing rows (ROWLOCK = no table lock)
+                    updated = 0
+                    if update_cols:
+                        update_set = ", ".join(f"t.[{c}] = s.[{c}]" for c in update_cols)
+                        conn.execute(text(f"""
+                            UPDATE t WITH (ROWLOCK) SET {update_set}
+                            FROM [{table_name}] t
+                            INNER JOIN [{temp_table}] s ON {pk_join}
+                        """))
+                        updated = conn.connection.cursor().rowcount if hasattr(conn, 'connection') else 0
+
+                    # INSERT new rows (ROWLOCK)
+                    insert_cols = ", ".join(f"[{c}]" for c in all_cols)
+                    insert_vals = ", ".join(f"s.[{c}]" for c in all_cols)
+                    conn.execute(text(f"""
+                        INSERT INTO [{table_name}] WITH (ROWLOCK) ({insert_cols})
+                        SELECT {insert_vals}
+                        FROM [{temp_table}] s
+                        WHERE NOT EXISTS (
+                            SELECT 1 FROM [{table_name}] t WITH (NOLOCK) WHERE {pk_join}
+                        )
+                    """))
+
                     conn.execute(text(f"DROP TABLE IF EXISTS [{temp_table}]"))
                     conn.commit()
-                    logger.info(f"Upserted {len(df)} rows into {table_name}")
+                    logger.info(f"Upserted {len(df)} rows into {table_name} (staging approach)")
                     return APIResponse(
                         success=True,
                         message=f"Upserted {len(df)} rows into {table_name}",
@@ -625,11 +633,11 @@ def review_data(
 
         # Get total count
         with de.connect() as conn:
-            count_sql = f"SELECT COUNT(*) FROM [{table_name}] {where_sql}"
+            count_sql = f"SELECT COUNT(*) FROM [{table_name}] WITH (NOLOCK) {where_sql}"
             total = conn.execute(text(count_sql), params).scalar()
 
             # Get data
-            data_sql = f"SELECT TOP(:lim) * FROM [{table_name}] {where_sql}"
+            data_sql = f"SELECT TOP(:lim) * FROM [{table_name}] WITH (NOLOCK) {where_sql}"
             params["lim"] = int(limit)
             rows = conn.execute(text(data_sql), params)
             columns = list(rows.keys())
@@ -714,7 +722,7 @@ def download_data(
             where_sql = "WHERE " + " AND ".join(where_clauses)
 
         with de.connect() as conn:
-            rows = conn.execute(text(f"SELECT * FROM [{table_name}] {where_sql}"), params)
+            rows = conn.execute(text(f"SELECT * FROM [{table_name}] WITH (NOLOCK) {where_sql}"), params)
             columns = list(rows.keys())
             result_rows = rows.fetchall()
 

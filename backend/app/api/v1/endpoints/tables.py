@@ -437,7 +437,7 @@ async def get_table_row_count(
         with engine.connect() as conn:
             # Use COUNT(*) for accurate count - safe table name escaping
             safe_table = table_name.replace("'", "''").replace("[", "").replace("]", "")
-            result = conn.execute(text(f"SELECT COUNT(*) FROM [{safe_table}]"))
+            result = conn.execute(text(f"SELECT COUNT(*) FROM [{safe_table}] WITH (NOLOCK)"))
             row = result.fetchone()
             count = row[0] if row else 0
             
@@ -597,7 +597,7 @@ async def get_distinct_values(
         # Query distinct values
         sql = f"""
             SELECT TOP {limit} [{safe_column}] as value, COUNT(*) as count
-            FROM [{safe_table}]
+            FROM [{safe_table}] WITH (NOLOCK)
             WHERE {where_clause} AND [{safe_column}] IS NOT NULL AND CAST([{safe_column}] AS NVARCHAR(MAX)) != ''
             GROUP BY [{safe_column}]
             ORDER BY COUNT(*) DESC
@@ -1087,7 +1087,7 @@ async def export_table_data(
         where_clause, params = _build_export_where_clause(filter_dict)
         
         # Get total count first
-        count_query = f"SELECT COUNT(*) FROM [{table_name}] {where_clause}"
+        count_query = f"SELECT COUNT(*) FROM [{table_name}] WITH (NOLOCK) {where_clause}"
         with data_engine.connect() as conn:
             total_rows = conn.execute(text(count_query), params).scalar()
         
@@ -1096,7 +1096,7 @@ async def export_table_data(
         
         if not need_split:
             # Single file export
-            query = f"SELECT {col_list} FROM [{table_name}] {where_clause}"
+            query = f"SELECT {col_list} FROM [{table_name}] WITH (NOLOCK) {where_clause}"
             with data_engine.connect() as conn:
                 df = pd.read_sql(text(query), conn, params=params)
             
@@ -1129,7 +1129,7 @@ async def export_table_data(
                 
                 # Use OFFSET/FETCH for pagination (SQL Server 2012+)
                 paginated_query = f"""
-                    SELECT {col_list} FROM [{table_name}] {where_clause}
+                    SELECT {col_list} FROM [{table_name}] WITH (NOLOCK) {where_clause}
                     ORDER BY (SELECT NULL)
                     OFFSET {offset} ROWS FETCH NEXT {max_rows} ROWS ONLY
                 """

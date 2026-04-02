@@ -211,8 +211,21 @@ export default function JobsDashboardPage() {
                         <div className="text-xs text-red-600 mt-1 truncate">{job.error_message}</div>
                       )}
                     </div>
-                    <div className="text-xs text-gray-400 shrink-0">
-                      {job.created_at ? formatDistanceToNow(new Date(job.created_at), { addSuffix: true }) : ''}
+                    <div className="flex flex-col items-end gap-1 shrink-0">
+                      <div className="text-xs text-gray-400">
+                        {job.created_at ? formatDistanceToNow(new Date(job.created_at), { addSuffix: true }) : ''}
+                      </div>
+                      {(job.status === 'running' || job.status === 'queued') && (
+                        <button onClick={async () => {
+                          try {
+                            await api.post(`/upload/jobs/${job.job_id}/cancel`, null, { params: { force: true } })
+                            toast.success('Job cancelled')
+                            loadAll()
+                          } catch { toast.error('Failed to cancel') }
+                        }} className="text-[10px] text-red-500 hover:text-red-700 font-medium flex items-center gap-0.5">
+                          <XCircle size={10}/> Stop
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -253,8 +266,21 @@ export default function JobsDashboardPage() {
                         </div>
                       )}
                     </div>
-                    <div className="text-xs text-gray-400 shrink-0">
-                      {job.created_at ? formatDistanceToNow(new Date(job.created_at), { addSuffix: true }) : ''}
+                    <div className="flex flex-col items-end gap-1 shrink-0">
+                      <div className="text-xs text-gray-400">
+                        {job.created_at ? formatDistanceToNow(new Date(job.created_at), { addSuffix: true }) : ''}
+                      </div>
+                      {job.status === 'running' && (
+                        <button onClick={async () => {
+                          try {
+                            await api.delete(`/tables/export/jobs/${job.job_id}`)
+                            toast.success('Export job deleted')
+                            loadAll()
+                          } catch { toast.error('Failed to delete') }
+                        }} className="text-[10px] text-red-500 hover:text-red-700 font-medium flex items-center gap-0.5">
+                          <XCircle size={10}/> Stop
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>

@@ -515,7 +515,7 @@ class TableManagementService:
                     col["display_name"] = rc.display_name
 
         # Get row count
-        count_sql = text(f"SELECT COUNT(*) FROM [{table_name}]")
+        count_sql = text(f"SELECT COUNT(*) FROM [{table_name}] WITH (NOLOCK)")
         with self.data_engine.connect() as conn:
             row_count = conn.execute(count_sql).scalar()
 
@@ -677,7 +677,7 @@ class TableManagementService:
                 where_clause = "WHERE " + " AND ".join(conditions)
 
         # Count total
-        count_sql = text(f"SELECT COUNT(*) FROM [{table_name}] {where_clause}")
+        count_sql = text(f"SELECT COUNT(*) FROM [{table_name}] WITH (NOLOCK) {where_clause}")
         with self.data_engine.connect() as conn:
             total = conn.execute(count_sql, params).scalar()
 
@@ -692,7 +692,7 @@ class TableManagementService:
         # Paginate with OFFSET/FETCH
         offset = (page - 1) * page_size
         data_sql = text(f"""
-            SELECT {col_list} FROM [{table_name}]
+            SELECT {col_list} FROM [{table_name}] WITH (NOLOCK)
             {where_clause}
             {order_clause}
             OFFSET :offset ROWS FETCH NEXT :page_size ROWS ONLY
@@ -725,7 +725,7 @@ class TableManagementService:
             raise ValueError(f"Cannot truncate protected table: {table_name}")
 
         # Get row count before truncate
-        count_sql = text(f"SELECT COUNT(*) FROM [{table_name}]")
+        count_sql = text(f"SELECT COUNT(*) FROM [{table_name}] WITH (NOLOCK)")
         with self.data_engine.connect() as conn:
             row_count = conn.execute(count_sql).scalar()
 

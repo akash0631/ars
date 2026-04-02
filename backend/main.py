@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
 from app.core.config import get_settings
-from app.database.session import check_db_connection, check_data_db_connection, SessionLocal
+from app.database.session import check_db_connection, check_data_db_connection, SessionLocal, enable_rcsi
 from app.api.v1.router import api_router
 from app.middleware.exception_handler import global_exception_handler, request_logging_middleware
 
@@ -47,6 +47,9 @@ async def lifespan(app: FastAPI):
         logger.info("✅ Database connection successful")
     else:
         logger.error("❌ Database connection failed!")
+
+    # Enable RCSI so readers never block during uploads
+    enable_rcsi()
 
     # Create super admin if needed
     try:

@@ -209,13 +209,13 @@ def _fetch_distinct_slocs(data_engine) -> List[dict]:
             if date_col:
                 rows = conn.execute(text(
                     f"SELECT sloc, MAX([{date_col}]) AS report_date "
-                    f"FROM ET_STORE_STOCK GROUP BY sloc ORDER BY sloc ASC"
+                    f"FROM ET_STORE_STOCK WITH (NOLOCK) GROUP BY sloc ORDER BY sloc ASC"
                 )).fetchall()
                 slocs = [{"sloc": str(r[0]), "report_date": _safe_iso(r[1])}
                          for r in rows if r[0] is not None]
             else:
                 rows = conn.execute(text(
-                    "SELECT DISTINCT sloc FROM ET_STORE_STOCK ORDER BY sloc ASC"
+                    "SELECT DISTINCT sloc FROM ET_STORE_STOCK WITH (NOLOCK) ORDER BY sloc ASC"
                 )).fetchall()
                 slocs = [{"sloc": str(r[0]), "report_date": None}
                          for r in rows if r[0] is not None]

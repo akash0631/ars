@@ -176,6 +176,85 @@ def _get_master_product_columns(engine) -> List[str]:
     return _get_table_columns(engine, "vw_master_product")
 
 
+# ==========================================================================
+# POST-PIVOT LOOKUP CONFIG
+# ==========================================================================
+# Each entry defines a lookup join to run after the pivot INSERT.
+# To add a new lookup: copy an entry and edit the fields.
+#
+#   lookup_table : source table name
+#   columns      : list of columns to pull from lookup_table
+#   col_type     : SQL type for new columns (default NVARCHAR(200))
+#   join_on      : dict mapping {output_table_col: lookup_table_col}
+#   requires     : list of hierarchy columns that must be present (uppercase)
+#
+POST_PIVOT_LOOKUPS = [
+    {
+        "lookup_table": "Master_ALC_INPUT_ST_MAJ_CAT",
+        "columns":      ["DISP_Q", "DPN"],
+        "col_type":     "NVARCHAR(200)",
+        "join_on":      {"WERKS": "ST_CD", "MAJ_CAT": "MAJ_CAT"},
+        "requires":     ["WERKS", "MAJ_CAT"],
+    },
+    # ── Add more lookups below ──────────────────────────────────────────
+    # {
+    #     "lookup_table": "Master_ANOTHER_TABLE",
+    #     "columns":      ["COL_A", "COL_B"],
+    #     "col_type":     "NVARCHAR(255)",
+    #     "join_on":      {"WERKS": "STORE_CODE", "MAJ_CAT": "CATEGORY"},
+    #     "requires":     ["WERKS", "MAJ_CAT"],
+    # },
+]
+
+
+def _apply_post_lookups(conn, out_table: str, hier_cols: List[str]):
+    """
+    After pivot INSERT, join lookup tables and add extra columns.
+    Reads config from POST_PIVOT_LOOKUPS list above.
+    """
+    hier_upper = {c.upper(): c for c in hier_cols}  # UPPER -> actual name
+
+    for cfg in POST_PIVOT_LOOKUPS:
+        # Check all required hierarchy columns are present
+        if not all(r in hier_upper for r in cfg["requires"]):
+            continue
+
+        lookup_table = cfg["lookup_table"]
+
+        # Check lookup table exists in DB
+        exists = conn.execute(text(
+            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = :tn"
+        ), {"tn": lookup_table}).scalar() > 0
+        if not exists:
+            logger.warning(f"Post-lookup skipped: table '{lookup_table}' not found")
+            continue
+
+        col_type = cfg.get("col_type", "NVARCHAR(200)")
+
+        # Add columns to output table if missing
+        for col in cfg["columns"]:
+            col_exists = conn.execute(text(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS "
+                "WHERE TABLE_NAME = :tbl AND COLUMN_NAME = :col"
+            ), {"tbl": out_table, "col": col}).scalar() > 0
+            if not col_exists:
+                _run(conn, f"ALTER TABLE [{out_table}] ADD [{col}] {col_type} NULL")
+
+        # Build UPDATE ... SET ... FROM ... JOIN
+        set_parts = ", ".join(f"O.[{c}] = L.[{c}]" for c in cfg["columns"])
+        join_parts = " AND ".join(
+            f"O.[{hier_upper[out_col.upper()]}] = L.[{lkp_col}]"
+            for out_col, lkp_col in cfg["join_on"].items()
+        )
+
+        _run(conn, f"""
+            UPDATE O SET {set_parts}
+            FROM [{out_table}] O
+            INNER JOIN [{lookup_table}] L ON {join_parts}
+        """)
+        logger.info(f"Post-lookup: joined {cfg['columns']} from {lookup_table} into {out_table}")
+
+
 def _build_and_run_grid(engine, grid: dict) -> dict:
     """
     Execute the dynamic pivot SQL for a grid and store results in output_table.
@@ -193,15 +272,15 @@ def _build_and_run_grid(engine, grid: dict) -> dict:
     with engine.connect() as conn:
         sloc_rows = conn.execute(text(f"""
             SELECT DISTINCT STK.SLOC, S.KPI
-            FROM dbo.ET_STORE_STOCK STK
-            INNER JOIN ARS_STORE_SLOC_SETTINGS S ON STK.SLOC = S.SLOC
+            FROM dbo.ET_STORE_STOCK STK WITH (NOLOCK)
+            INNER JOIN ARS_STORE_SLOC_SETTINGS S WITH (NOLOCK) ON STK.SLOC = S.SLOC
             WHERE UPPER(S.STATUS) = 'ACTIVE'{kpi_clause}
             ORDER BY STK.SLOC ASC
         """)).fetchall()
 
         # Include PEND_ALC if active in settings and table exists
         pend_row = conn.execute(text(
-            "SELECT S.SLOC, S.KPI FROM ARS_STORE_SLOC_SETTINGS S WHERE S.SLOC='PEND_ALC' AND UPPER(S.STATUS)='ACTIVE'"
+            "SELECT S.SLOC, S.KPI FROM ARS_STORE_SLOC_SETTINGS S WITH (NOLOCK) WHERE S.SLOC='PEND_ALC' AND UPPER(S.STATUS)='ACTIVE'"
         )).fetchone()
         if pend_row:
             pend_table_exists = conn.execute(text(
@@ -249,7 +328,7 @@ def _build_and_run_grid(engine, grid: dict) -> dict:
     hier_select = ", ".join(hier_select_parts)
     mp_join     = ""
     if has_mp_cols:
-        mp_join = "LEFT JOIN dbo.vw_master_product MP ON STK.MATNR = MP.ARTICLE_NUMBER"
+        mp_join = "LEFT JOIN dbo.vw_master_product MP WITH (NOLOCK) ON STK.MATNR = MP.ARTICLE_NUMBER"
 
     # ── 4. Determine output columns & types for CREATE TABLE ─────────────────
     col_defs = ", ".join(f"[{c}] NVARCHAR(200) NULL" for c in hier_cols)
@@ -334,9 +413,9 @@ WITH Stock_CTE AS (
         {hier_select},
         STK.SLOC,
         STK.PARTICULARS_VALUE
-    FROM dbo.ET_STORE_STOCK STK
+    FROM dbo.ET_STORE_STOCK STK WITH (NOLOCK)
     {mp_join}
-    INNER JOIN ARS_STORE_SLOC_SETTINGS S ON STK.SLOC = S.SLOC
+    INNER JOIN ARS_STORE_SLOC_SETTINGS S WITH (NOLOCK) ON STK.SLOC = S.SLOC
     WHERE UPPER(S.STATUS) = 'ACTIVE'{kpi_clause}
     {pend_union}
 )
@@ -354,6 +433,9 @@ ORDER BY {', '.join(f'[{c}]' for c in hier_cols)};
 """
         conn.execute(text(insert_sql))
         conn.commit()
+
+        # ── 6. Post-pivot lookups ───────────────────────────────────────────
+        _apply_post_lookups(conn, out_table, hier_cols)
 
         # Count inserted rows
         count_row = conn.execute(text(f"SELECT COUNT(*) FROM [{out_table}]")).fetchone()

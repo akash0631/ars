@@ -268,7 +268,7 @@ def get_ssn_values(current_user: User = Depends(get_current_user)):
     """Return distinct SSN values from VW_MASTER_PRODUCT."""
     engine = get_data_engine()
     try:
-        df = pd.read_sql("SELECT DISTINCT SSN FROM dbo.VW_MASTER_PRODUCT WHERE SSN IS NOT NULL AND SSN <> '' ORDER BY SSN", engine)
+        df = pd.read_sql("SELECT DISTINCT SSN FROM dbo.VW_MASTER_PRODUCT WITH (NOLOCK) WHERE SSN IS NOT NULL AND SSN <> '' ORDER BY SSN", engine)
         ssn_list = df['SSN'].astype(str).tolist()
     except Exception:
         ssn_list = []
@@ -304,9 +304,9 @@ def get_majcats(grouping_column: str = "MACRO_MVGR",
     engine = get_data_engine()
     table = f"Master_HIER_{grouping_column}"
     try:
-        df = pd.read_sql(f"SELECT DISTINCT MAJ_CAT FROM dbo.{table} WHERE SEG IN ('APP','GM') ORDER BY MAJ_CAT", engine)
+        df = pd.read_sql(f"SELECT DISTINCT MAJ_CAT FROM dbo.{table} WITH (NOLOCK) WHERE SEG IN ('APP','GM') ORDER BY MAJ_CAT", engine)
     except Exception:
-        df = pd.read_sql("SELECT DISTINCT MAJ_CAT FROM dbo.Master_HIER_MACRO_MVGR WHERE SEG IN ('APP','GM') ORDER BY MAJ_CAT", engine)
+        df = pd.read_sql("SELECT DISTINCT MAJ_CAT FROM dbo.Master_HIER_MACRO_MVGR WITH (NOLOCK) WHERE SEG IN ('APP','GM') ORDER BY MAJ_CAT", engine)
     return APIResponse(success=True, data={"majcats": df['MAJ_CAT'].tolist()})
 
 
@@ -877,7 +877,7 @@ def _run_job(job_id):
         majcats = payload.get("majcats") or []
         if not majcats:
             try:
-                df_mj = pd.read_sql(f"SELECT DISTINCT MAJ_CAT FROM dbo.Master_HIER_{gc_col} WHERE SEG IN ('APP','GM')", engine)
+                df_mj = pd.read_sql(f"SELECT DISTINCT MAJ_CAT FROM dbo.Master_HIER_{gc_col} WITH (NOLOCK) WHERE SEG IN ('APP','GM')", engine)
                 majcats = df_mj['MAJ_CAT'].tolist()
             except Exception:
                 majcats = []

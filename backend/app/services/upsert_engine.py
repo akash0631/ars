@@ -121,10 +121,46 @@ class UpsertEngine:
         # Align DataFrame columns to target table
         df = self._align_columns(df, target_columns)
 
-        # Process in chunks
-        total_chunks = (len(df) + chunk_size - 1) // chunk_size
         total_rows = len(df)
-        logger.info(f"[{batch_id}] Upsert starting: {total_rows} rows in {total_chunks} chunks → {table_name}")
+
+        # ── FAST PATH: Bulk staging (>1000 rows) ────────────────────────
+        # Uses: bulk insert into staging → single UPDATE → single INSERT
+        # Locks target table for seconds instead of minutes
+        if total_rows > 1000:
+            logger.info(f"[{batch_id}] Fast bulk upsert: {total_rows} rows → {table_name}")
+            try:
+                ins, upd = self._bulk_upsert(
+                    table_name, df, primary_key_columns, target_columns,
+                    batch_id, progress_callback, cancel_check,
+                )
+                total_inserted = ins
+                total_updated = upd
+                total_unchanged = total_rows - ins - upd
+
+                # Audit summary
+                self.audit.log_data_change(
+                    table_name=table_name, changed_by=changed_by, action="BULK_UPSERT",
+                    source=source, ip_address=ip_address, batch_id=batch_id,
+                    details={"inserted": ins, "updated": upd, "total": total_rows},
+                )
+                self.db.commit()
+
+                if progress_callback:
+                    progress_callback(total_rows, total_rows)
+
+                return self._build_result(
+                    table_name, batch_id, total_inserted, total_updated,
+                    total_unchanged, 0, total_rows, start_time, {},
+                )
+            except InterruptedError:
+                raise
+            except Exception as e:
+                logger.warning(f"[{batch_id}] Fast bulk failed, falling back to chunked MERGE: {e}")
+                # Fall through to chunked approach
+
+        # ── STANDARD PATH: Chunked MERGE (for small datasets or fallback) ─
+        total_chunks = (len(df) + chunk_size - 1) // chunk_size
+        logger.info(f"[{batch_id}] Chunked upsert: {total_rows} rows in {total_chunks} chunks → {table_name}")
 
         for chunk_idx in range(total_chunks):
             if cancel_check and cancel_check():
@@ -133,14 +169,12 @@ class UpsertEngine:
             chunk_start = chunk_idx * chunk_size
             chunk_end = min(chunk_start + chunk_size, total_rows)
             chunk_df = df.iloc[chunk_start:chunk_end].copy()
-            
-            # Log progress every chunk
+
             logger.info(f"[{batch_id}] Processing rows {chunk_start + 1} to {chunk_end} of {total_rows} ({int((chunk_end / total_rows) * 100)}%)")
 
             try:
-                # For sample collection, only enable row audit for first chunk if not already enabled
                 should_collect_rows = enable_row_audit or (collect_sample_changes and len(sample_changes) < 100)
-                
+
                 inserted, updated, unchanged, chunk_changes, row_changes = self._process_chunk(
                     table_name=table_name,
                     chunk_df=chunk_df,
@@ -262,6 +296,147 @@ class UpsertEngine:
             sample_changes=sample_changes if sample_changes else None,
         )
 
+    def _bulk_upsert(
+        self,
+        table_name: str,
+        df: pd.DataFrame,
+        primary_key_columns: List[str],
+        target_columns: Dict[str, str],
+        batch_id: str,
+        progress_callback: Optional[Callable] = None,
+        cancel_check: Optional[Callable] = None,
+    ) -> Tuple[int, int]:
+        """
+        Fast bulk upsert: staging table → single UPDATE → single INSERT.
+        Holds locks on the target table for SECONDS, not minutes.
+
+        Flow:
+        1. Create global temp staging table
+        2. Bulk insert ALL rows into staging (fast_executemany, no target locks)
+        3. One UPDATE for existing rows (short lock)
+        4. One INSERT for new rows (short lock)
+        5. Drop staging table
+        """
+        staging = f"##bulk_stage_{batch_id}"
+        non_pk_cols = [c for c in df.columns if c not in primary_key_columns]
+        total_rows = len(df)
+
+        conn = self.engine.raw_connection()
+        try:
+            cursor = conn.cursor()
+
+            # 1. Create staging table (all NVARCHAR to handle __SKIP__/__NULL__)
+            col_defs = ", ".join(f"[{c}] NVARCHAR(MAX) NULL" for c in df.columns)
+            cursor.execute(f"CREATE TABLE {staging} ({col_defs})")
+
+            # 2. Bulk insert into staging in batches of 5000 (no locks on target!)
+            insert_cols = list(df.columns)
+            placeholders = ", ".join(["?" for _ in insert_cols])
+            col_list = ", ".join([f"[{c}]" for c in insert_cols])
+            insert_sql = f"INSERT INTO {staging} ({col_list}) VALUES ({placeholders})"
+
+            cursor.fast_executemany = True
+            batch_size = 5000
+            for i in range(0, total_rows, batch_size):
+                if cancel_check and cancel_check():
+                    raise InterruptedError("Cancelled")
+
+                batch = df.iloc[i:i + batch_size]
+                rows = []
+                for _, row in batch.iterrows():
+                    rows.append(tuple(
+                        None if pd.isna(v) else v for v in (row[c] for c in insert_cols)
+                    ))
+                cursor.executemany(insert_sql, rows)
+
+                if progress_callback:
+                    progress_callback(min(i + batch_size, total_rows), total_rows)
+
+                logger.info(f"[{batch_id}] Staged {min(i + batch_size, total_rows)}/{total_rows} rows")
+
+            conn.commit()
+            logger.info(f"[{batch_id}] Staging complete. Running UPDATE + INSERT...")
+
+            # Helper: TRY_CAST for type conversion
+            def cast(col, alias="s"):
+                ttype = target_columns.get(col, "NVARCHAR(MAX)")
+                if ttype.upper().startswith(("NVARCHAR", "VARCHAR", "NCHAR", "CHAR", "NTEXT", "TEXT")):
+                    return f"{alias}.[{col}]"
+                return f"TRY_CAST({alias}.[{col}] AS {ttype})"
+
+            # PK join condition
+            pk_join = " AND ".join(f"t.[{pk}] = {cast(pk, 's')}" for pk in primary_key_columns)
+
+            # 3. UPDATE existing rows (ROWLOCK to prevent table lock)
+            if non_pk_cols:
+                set_parts = ", ".join(
+                    f"t.[{c}] = CASE "
+                    f"WHEN s.[{c}] = '__SKIP__' THEN t.[{c}] "
+                    f"WHEN s.[{c}] = '__NULL__' THEN NULL "
+                    f"ELSE {cast(c, 's')} END"
+                    for c in non_pk_cols
+                )
+                # Only update rows where at least one column changed
+                change_cond = " OR ".join(
+                    f"(s.[{c}] <> '__SKIP__' AND "
+                    f"ISNULL(CAST(t.[{c}] AS NVARCHAR(MAX)),'') <> "
+                    f"CASE WHEN s.[{c}]='__NULL__' THEN '' "
+                    f"ELSE ISNULL(CAST(s.[{c}] AS NVARCHAR(MAX)),'') END)"
+                    for c in non_pk_cols
+                )
+                update_sql = f"""
+                    UPDATE t WITH (ROWLOCK) SET {set_parts}
+                    FROM [{table_name}] t
+                    INNER JOIN {staging} s ON {pk_join}
+                    WHERE ({change_cond})
+                """
+                cursor.execute(update_sql)
+                updated = cursor.rowcount
+            else:
+                updated = 0
+
+            conn.commit()
+            logger.info(f"[{batch_id}] Updated {updated} rows")
+
+            # 4. INSERT new rows (ROWLOCK)
+            all_cols = primary_key_columns + non_pk_cols
+            ins_col_list = ", ".join(f"[{c}]" for c in all_cols)
+            ins_vals = ", ".join(
+                cast(c, 's') if c in primary_key_columns else
+                f"CASE WHEN s.[{c}] IN ('__SKIP__','__NULL__') THEN NULL ELSE {cast(c,'s')} END"
+                for c in all_cols
+            )
+            insert_new_sql = f"""
+                INSERT INTO [{table_name}] WITH (ROWLOCK) ({ins_col_list})
+                SELECT {ins_vals}
+                FROM {staging} s
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM [{table_name}] t WITH (NOLOCK) WHERE {pk_join}
+                )
+            """
+            cursor.execute(insert_new_sql)
+            inserted = cursor.rowcount
+            conn.commit()
+            logger.info(f"[{batch_id}] Inserted {inserted} new rows")
+
+            # 5. Cleanup
+            cursor.execute(f"DROP TABLE IF EXISTS {staging}")
+            conn.commit()
+
+            return inserted, updated
+
+        except Exception:
+            try:
+                conn.rollback()
+                cursor = conn.cursor()
+                cursor.execute(f"DROP TABLE IF EXISTS {staging}")
+                conn.commit()
+            except Exception:
+                pass
+            raise
+        finally:
+            conn.close()
+
     def _process_chunk(
         self,
         table_name: str,
@@ -294,6 +469,13 @@ class UpsertEngine:
         conn = self.engine.raw_connection()
         try:
             cursor = conn.cursor()
+
+            # Prevent lock escalation from row-level to table-level
+            cursor.execute("SET LOCK_TIMEOUT 30000")  # 30s timeout instead of infinite wait
+            try:
+                cursor.execute(f"ALTER TABLE [{table_name}] SET (LOCK_ESCALATION = DISABLE)")
+            except Exception:
+                pass  # May fail if no ALTER permission, that's OK
 
             # 1. Create temp table
             create_temp_sql = self._build_create_temp_sql(
@@ -331,10 +513,10 @@ class UpsertEngine:
                     all_col_list = ", ".join([f"t.[{c}]" for c in chunk_df.columns])
                     pk_join = " AND ".join([f"t.[{pk}] = s.[{pk}]" for pk in primary_key_columns])
                     
-                    # Get existing rows that match our temp table PKs
+                    # Get existing rows that match our temp table PKs (NOLOCK to avoid blocking)
                     old_query = f"""
                         SELECT {pk_col_list}, {all_col_list}
-                        FROM [{table_name}] t
+                        FROM [{table_name}] t WITH (NOLOCK)
                         INNER JOIN {temp_table} s ON {pk_join}
                     """
                     cursor.execute(old_query)
@@ -537,8 +719,8 @@ class UpsertEngine:
             {output_table_cols}
         );
 
-        -- Execute MERGE
-        MERGE [{target_table}] AS target
+        -- Execute MERGE (ROWLOCK to prevent table-level lock escalation)
+        MERGE [{target_table}] WITH (ROWLOCK) AS target
         USING {temp_table} AS source
         ON ({join_cond})
         {when_matched_clause}WHEN NOT MATCHED BY TARGET

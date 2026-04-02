@@ -74,7 +74,7 @@ def _do_lookup(df_upload: pd.DataFrame, join_column: str,
         batch = keys[i:i + BATCH]
         placeholders = ", ".join(f":k{j}" for j in range(len(batch)))
         params = {f"k{j}": v for j, v in enumerate(batch)}
-        sql = f"SELECT DISTINCT {cols_sql} FROM dbo.VW_MASTER_PRODUCT WHERE [{master_column}] IN ({placeholders})"
+        sql = f"SELECT DISTINCT {cols_sql} FROM dbo.VW_MASTER_PRODUCT WITH (NOLOCK) WHERE [{master_column}] IN ({placeholders})"
         df_batch = pd.read_sql(text(sql), engine, params=params)
         frames.append(df_batch)
 
