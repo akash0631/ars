@@ -175,8 +175,20 @@ class TableManagementService:
         registry = self.db.query(TableRegistry).filter(
             TableRegistry.table_name == table_name, TableRegistry.is_active == True
         ).first()
+
+        # Verify table exists in data DB even if not in registry
         if not registry:
-            raise ValueError(f"Table '{table_name}' not found in registry")
+            try:
+                with self.data_engine.connect() as conn:
+                    exists = conn.execute(text(
+                        "SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = :tn"
+                    ), {"tn": table_name}).fetchone()
+                if not exists:
+                    raise ValueError(f"Table '{table_name}' not found")
+            except ValueError:
+                raise
+            except Exception:
+                raise ValueError(f"Table '{table_name}' not found")
 
         changes = []
 
@@ -192,27 +204,29 @@ class TableManagementService:
                 except Exception as e:
                     raise ValueError(f"Failed to add column '{col['column_name']}': {e}")
 
-                # Register column
-                col_reg = ColumnRegistry(
-                    table_id=registry.id,
-                    column_name=col["column_name"],
-                    display_name=col.get("display_name", col["column_name"]),
-                    data_type=col["data_type"],
-                    max_length=col.get("max_length"),
-                    is_nullable=col.get("is_nullable", True),
-                    is_primary_key=False,
-                    default_value=col.get("default_value"),
-                )
-                self.db.add(col_reg)
+                # Register column if registry exists
+                if registry:
+                    col_reg = ColumnRegistry(
+                        table_id=registry.id,
+                        column_name=col["column_name"],
+                        display_name=col.get("display_name", col["column_name"]),
+                        data_type=col["data_type"],
+                        max_length=col.get("max_length"),
+                        is_nullable=col.get("is_nullable", True),
+                        is_primary_key=False,
+                        default_value=col.get("default_value"),
+                    )
+                    self.db.add(col_reg)
                 changes.append(f"ADD {col['column_name']}")
 
         # Drop columns
         if drop_columns:
             for col_name in drop_columns:
                 # Check it's not a PK
-                pk_cols = json.loads(registry.primary_key_columns or "[]")
-                if col_name in pk_cols:
-                    raise ValueError(f"Cannot drop primary key column: {col_name}")
+                if registry:
+                    pk_cols = json.loads(registry.primary_key_columns or "[]")
+                    if col_name in pk_cols:
+                        raise ValueError(f"Cannot drop primary key column: {col_name}")
 
                 alter_sql = f"ALTER TABLE [{table_name}] DROP COLUMN [{col_name}]"
                 try:
@@ -222,13 +236,14 @@ class TableManagementService:
                 except Exception as e:
                     raise ValueError(f"Failed to drop column '{col_name}': {e}")
 
-                # Soft-delete from registry
-                col_reg = self.db.query(ColumnRegistry).filter(
-                    ColumnRegistry.table_id == registry.id,
-                    ColumnRegistry.column_name == col_name,
-                ).first()
-                if col_reg:
-                    col_reg.is_active = False
+                # Soft-delete from registry if exists
+                if registry:
+                    col_reg = self.db.query(ColumnRegistry).filter(
+                        ColumnRegistry.table_id == registry.id,
+                        ColumnRegistry.column_name == col_name,
+                    ).first()
+                    if col_reg:
+                        col_reg.is_active = False
                 changes.append(f"DROP {col_name}")
 
         # Rename columns
@@ -242,13 +257,14 @@ class TableManagementService:
                 except Exception as e:
                     raise ValueError(f"Failed to rename '{old_name}' → '{new_name}': {e}")
 
-                # Update registry
-                col_reg = self.db.query(ColumnRegistry).filter(
-                    ColumnRegistry.table_id == registry.id,
-                    ColumnRegistry.column_name == old_name,
-                ).first()
-                if col_reg:
-                    col_reg.column_name = new_name
+                # Update registry if exists
+                if registry:
+                    col_reg = self.db.query(ColumnRegistry).filter(
+                        ColumnRegistry.table_id == registry.id,
+                        ColumnRegistry.column_name == old_name,
+                    ).first()
+                    if col_reg:
+                        col_reg.column_name = new_name
                 changes.append(f"RENAME {old_name} → {new_name}")
 
         # Audit
@@ -280,12 +296,22 @@ class TableManagementService:
         if table_name.lower() in PROTECTED_TABLES:
             raise ValueError(f"Cannot alter protected table: {table_name}")
 
-        # Verify table exists
+        # Verify table exists (registry or data DB)
         registry = self.db.query(TableRegistry).filter(
             TableRegistry.table_name == table_name, TableRegistry.is_active == True
         ).first()
         if not registry:
-            raise ValueError(f"Table '{table_name}' not found in registry")
+            try:
+                with self.data_engine.connect() as conn:
+                    exists = conn.execute(text(
+                        "SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = :tn"
+                    ), {"tn": table_name}).fetchone()
+                if not exists:
+                    raise ValueError(f"Table '{table_name}' not found")
+            except ValueError:
+                raise
+            except Exception:
+                raise ValueError(f"Table '{table_name}' not found")
 
         try:
             with self.data_engine.connect() as conn:
@@ -341,14 +367,15 @@ class TableManagementService:
             except:
                 pass
 
-        col_reg = self.db.query(ColumnRegistry).filter(
-            ColumnRegistry.table_id == registry.id,
-            ColumnRegistry.column_name == column_name,
-        ).first()
-        if col_reg:
-            col_reg.data_type = base_type
-            if max_length:
-                col_reg.max_length = max_length
+        if registry:
+            col_reg = self.db.query(ColumnRegistry).filter(
+                ColumnRegistry.table_id == registry.id,
+                ColumnRegistry.column_name == column_name,
+            ).first()
+            if col_reg:
+                col_reg.data_type = base_type
+                if max_length:
+                    col_reg.max_length = max_length
 
         # Audit
         self.audit.log_schema_change(
@@ -726,14 +753,25 @@ class TableManagementService:
     def _build_column_sql(self, col: Dict[str, Any]) -> str:
         """Build SQL column definition from column dict."""
         name = col["column_name"]
-        data_type = col["data_type"].upper()
+        raw_type = col["data_type"].upper().strip()
 
-        if data_type not in ALLOWED_DATA_TYPES:
-            raise ValueError(f"Unsupported data type: {data_type}. Allowed: {ALLOWED_DATA_TYPES}")
+        # Extract base type and inline length, e.g. "NVARCHAR(4)" -> base="NVARCHAR", inline_len=4
+        base_type = raw_type.split("(")[0].strip()
+        inline_len = None
+        if "(" in raw_type and ")" in raw_type:
+            try:
+                inline_len = raw_type.split("(")[1].split(")")[0].strip()
+            except Exception:
+                pass
+
+        if base_type not in ALLOWED_DATA_TYPES:
+            raise ValueError(f"Unsupported data type: {base_type}. Allowed: {ALLOWED_DATA_TYPES}")
+
+        data_type = base_type
 
         # Build type with length/precision
         if data_type in ("NVARCHAR", "VARCHAR", "NCHAR", "CHAR"):
-            length = col.get("max_length", 255)
+            length = inline_len or col.get("max_length", 255)
             type_sql = f"{data_type}({length})"
         elif data_type in ("DECIMAL", "NUMERIC"):
             precision = col.get("max_length", 18)

@@ -313,10 +313,12 @@ export default function UploadPage() {
   }, [selectedTable])
 
   // Filter out system-generated columns (identity, computed, auto-generated)
-  const systemColumns = ['id', 'created_at', 'updated_at', 'created_by', 'updated_by', 'modified_at', 'modified_by']
+  const systemColumns = ['id', 'created_at', 'updated_at', 'created_by', 'updated_by', 'modified_at', 'modified_by', 'upload_datetime', 'upload_date', 'upload_time', 'uploaded_at', 'uploaded_by', 'insert_date', 'insert_datetime']
   const isSystemColumn = (col) => {
     const name = col.column_name?.toLowerCase() || ''
-    return col.is_identity || col.is_computed || systemColumns.includes(name)
+    const def_ = (col.default_value || '').toLowerCase()
+    const hasAutoDefault = def_.includes('getdate') || def_.includes('current_timestamp') || def_.includes('sysdatetime')
+    return col.is_identity || col.is_computed || systemColumns.includes(name) || hasAutoDefault
   }
   
   const editableColumns = schema?.editable_columns || []

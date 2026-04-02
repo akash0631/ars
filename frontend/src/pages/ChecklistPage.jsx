@@ -7,7 +7,7 @@ import { useNavigate } from 'react-router-dom'
 import { checklistAPI } from '@/services/api'
 import toast from 'react-hot-toast'
 import {
-  RefreshCw, Plus, Trash2, Upload, Edit3,
+  RefreshCw, Plus, Trash2, Upload, Edit3, Download,
   CheckCircle2, AlertTriangle, XCircle, ClipboardList, Search,
   ChevronUp, ChevronDown, X, Database, Eye, CircleCheck,
   FolderOpen, ChevronRight
@@ -261,6 +261,9 @@ export default function ChecklistPage() {
   const [availTbl, setAvailTbl] = useState([])
   const [existGrp, setExistGrp] = useState([])
   const [loadTbl,  setLoadTbl]  = useState(false)
+  const [collapsed, setCollapsed] = useState({})   // { groupName: true/false }
+
+  const toggleGroup = (gName) => setCollapsed(prev => ({ ...prev, [gName]: !prev[gName] }))
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -345,7 +348,7 @@ export default function ChecklistPage() {
         <div style={{display:'flex',gap:5}}>
           <button onClick={loadData} disabled={loading} style={{
             display:'flex',alignItems:'center',gap:3,padding:'3px 8px',borderRadius:5,fontSize:10,fontWeight:600,
-            cursor:'pointer',border:`1px solid ${C.amberBd}`,background:C.amberBg,color:C.amber,opacity:loading?.5:1,
+            cursor:'pointer',border:`1px solid ${C.amberBd}`,background:C.amberBg,color:C.amber,opacity:loading?0.5:1,
           }}>
             <RefreshCw size={10} style={{animation:loading?'spin 1s linear infinite':'none'}}/> Refresh
           </button>
@@ -378,7 +381,7 @@ export default function ChecklistPage() {
                 <col style={{width:70}}/>
                 <col style={{width:170}}/>
                 <col style={{width:36}}/>
-                <col style={{width:130}}/>
+                <col style={{width:155}}/>
               </colgroup>
               <thead>
                 <tr style={{background:'#f1f5f9',borderBottom:`1.5px solid ${C.cardBorder}`}}>
@@ -396,19 +399,24 @@ export default function ChecklistPage() {
                   if (gItems.length === 0) return null
                   const gc = GROUP_COLORS[gi % GROUP_COLORS.length]
                   return [
-                    /* Group header row */
-                    <tr key={`gh-${gName}`} style={{background:gc.bg,borderBottom:`1px solid ${gc.bd}`}}>
+                    /* Group header row — clickable to expand/collapse */
+                    <tr key={`gh-${gName}`} style={{background:gc.bg,borderBottom:`1px solid ${gc.bd}`,cursor:'pointer',userSelect:'none'}}
+                      onClick={()=>toggleGroup(gName)}>
                       <td colSpan={6} style={{padding:'4px 8px'}}>
                         <div style={{display:'flex',alignItems:'center',gap:5}}>
                           <div style={{width:3,height:14,borderRadius:2,background:gc.bar,flexShrink:0}}/>
+                          <ChevronRight size={11} style={{
+                            color:gc.fg,flexShrink:0,transition:'transform .2s',
+                            transform:collapsed[gName]?'rotate(0deg)':'rotate(90deg)',
+                          }}/>
                           <FolderOpen size={11} style={{color:gc.fg,flexShrink:0}}/>
                           <span style={{fontSize:10,fontWeight:700,color:gc.fg,textTransform:'uppercase',letterSpacing:'.04em'}}>{gName}</span>
                           <span style={{fontSize:9,color:gc.fg,opacity:.7,fontWeight:500}}>({gItems.length})</span>
                         </div>
                       </td>
                     </tr>,
-                    /* Group items */
-                    ...gItems.map((row,idx) => {
+                    /* Group items — hidden when collapsed */
+                    ...(!collapsed[gName] ? gItems : []).map((row,idx) => {
                       const f=freshness(row.last_checked_at), FI=f.icon
                       return (
                         <tr key={row.id} style={{
@@ -481,6 +489,7 @@ export default function ChecklistPage() {
                               {row.table_exists && <IBtn icon={Eye} title="View data" onClick={()=>navigate(`/tables/${encodeURIComponent(row.table_name)}?from=checklist`)} color={C.primary} bg={C.primaryLight} bd={C.primaryBd}/>}
                               {row.table_exists && <IBtn icon={Edit3} title="Edit data" onClick={()=>navigate(`/editor?table=${encodeURIComponent(row.table_name)}&from=checklist`)} color={'#7c3aed'} bg={'#f5f3ff'} bd={'#ddd6fe'}/>}
                               {row.table_exists && <IBtn icon={Upload} title="Upload" onClick={()=>navigate(`/upload?table=${encodeURIComponent(row.table_name)}&from=checklist`)} color={C.amber} bg={C.amberBg} bd={C.amberBd}/>}
+                              {row.table_exists && <IBtn icon={Download} title="Export data" onClick={()=>navigate(`/export?table=${encodeURIComponent(row.table_name)}&from=checklist`)} color={'#0284c7'} bg={'#f0f9ff'} bd={'#bae6fd'}/>}
                               <IBtn icon={Trash2} title="Remove" onClick={()=>handleDelete(row.id,row.display_name)} color={C.red} bg={C.redBg} bd={C.redBd}/>
                             </div>
                           </td>

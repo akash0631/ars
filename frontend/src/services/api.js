@@ -98,6 +98,7 @@ export const tablesAPI = {
   schema: (name) => api.get(`/tables/${name}/schema`),
   create: (data) => api.post('/tables', data),
   alter: (name, data) => api.put(`/tables/${name}/alter`, data),
+  reorderColumns: (name, columns) => api.put(`/tables/${name}/reorder-columns`, { columns }),
   delete: (name) => api.delete(`/tables/${name}`),
   data: (name, params) => api.get(`/tables/${name}/data`, { params }),
   truncate: (name) => api.delete(`/tables/${name}/data`),
@@ -359,6 +360,22 @@ export const checklistAPI = {
   reorder:          (items)      => api.put('/checklist/reorder', { items }),
   stamp:            (tableName)  => api.post(`/checklist/stamp/${encodeURIComponent(tableName)}`),
   deleteItem:       (id)         => api.delete(`/checklist/items/${id}`),
+}
+
+// ============== Trends ==============
+export const trendsAPI = {
+  listTables:      ()                    => api.get('/trends/tables'),
+  getSchema:       (name)                => api.get(`/trends/tables/${encodeURIComponent(name)}/schema`),
+  getDistinct:     (name, col)           => api.get(`/trends/tables/${encodeURIComponent(name)}/distinct/${encodeURIComponent(col)}`),
+  uploadPreview:   (formData)            => api.post('/trends/upload/preview', formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
+  checkConflicts:  (data)                => api.post('/trends/upload/check-conflicts', data),
+  upload:          (formData, onProgress) => api.post('/trends/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' }, onUploadProgress: onProgress, timeout: 300000 }),
+  review:          (data)                => api.post('/trends/review', data),
+  downloadReview:  (name, params)        => api.get(`/trends/review/${encodeURIComponent(name)}/download`, { params, responseType: 'blob', timeout: 600000 }),
+  createTable:     (formData)            => api.post('/trends/create-table', formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
+  truncateTable:   (name)                => api.post(`/trends/admin/truncate/${encodeURIComponent(name)}`),
+  dropTable:       (name)                => api.delete(`/trends/admin/drop/${encodeURIComponent(name)}`),
+  alterColumns:    (name, data)          => api.put(`/trends/admin/${encodeURIComponent(name)}/columns`, data),
 }
 
 // ============== Reports ==============

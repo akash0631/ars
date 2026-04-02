@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { Settings, Table, Columns, Trash2, Plus, Edit, RefreshCw, AlertTriangle, ChevronDown } from 'lucide-react'
+import { useState, useEffect, useCallback } from 'react'
+import { Settings, Table, Columns, Trash2, Plus, Edit, RefreshCw, AlertTriangle, ChevronDown, ArrowUp, ArrowDown, Save, GripVertical } from 'lucide-react'
 import { tablesAPI } from '@/services/api'
 import toast from 'react-hot-toast'
 
@@ -18,6 +18,9 @@ export default function TableManagementPage() {
   const [showTruncate, setShowTruncate] = useState(false)
   const [showDrop, setShowDrop] = useState(false)
   const [selectedColumn, setSelectedColumn] = useState(null)
+  const [originalOrder, setOriginalOrder] = useState([])
+  const [reordering, setReordering] = useState(false)
+  const [dragIdx, setDragIdx] = useState(null)
 
   const suffixes = ['', 'MST', 'TXN', 'ALC', 'STK', 'RPT', 'TMP', 'LOG']
 
@@ -39,13 +42,51 @@ export default function TableManagementPage() {
     setLoading(true)
     try {
       const { data } = await tablesAPI.schema(tableName)
-      setColumns(data.data?.columns || [])
+      const cols = data.data?.columns || []
+      setColumns(cols)
+      setOriginalOrder(cols.map(c => c.column_name || c.name))
       setSelectedTable(tableName)
     } catch (err) {
       toast.error('Failed to fetch schema')
     } finally {
       setLoading(false)
     }
+  }
+
+  const moveColumn = (idx, dir) => {
+    const newIdx = idx + dir
+    if (newIdx < 0 || newIdx >= columns.length) return
+    const updated = [...columns]
+    const [moved] = updated.splice(idx, 1)
+    updated.splice(newIdx, 0, moved)
+    setColumns(updated)
+  }
+
+  const onDragStart = (idx) => setDragIdx(idx)
+  const onDragOver = (e, idx) => {
+    e.preventDefault()
+    if (dragIdx === null || dragIdx === idx) return
+    const updated = [...columns]
+    const [moved] = updated.splice(dragIdx, 1)
+    updated.splice(idx, 0, moved)
+    setColumns(updated)
+    setDragIdx(idx)
+  }
+  const onDragEnd = () => setDragIdx(null)
+
+  const orderChanged = columns.length > 0 && JSON.stringify(columns.map(c => c.column_name || c.name)) !== JSON.stringify(originalOrder)
+
+  const saveColumnOrder = async () => {
+    if (!selectedTable || !orderChanged) return
+    setReordering(true)
+    try {
+      const newOrder = columns.map(c => c.column_name || c.name)
+      await tablesAPI.reorderColumns(selectedTable, newOrder)
+      setOriginalOrder(newOrder)
+      toast.success('Column order saved')
+    } catch (e) {
+      toast.error(e.response?.data?.detail || 'Failed to reorder columns')
+    } finally { setReordering(false) }
   }
 
   const filteredTables = tables.filter(t => {
@@ -142,29 +183,62 @@ export default function TableManagementPage() {
                   </button>
                 </div>
               </div>
+              {/* Save Order button */}
+              {orderChanged && (
+                <div className="px-4 py-2 bg-amber-50 border-b border-amber-200 flex items-center justify-between">
+                  <span className="text-xs text-amber-700 font-medium">Column order has been changed. Save to apply in SQL Server.</span>
+                  <button onClick={saveColumnOrder} disabled={reordering}
+                    className="btn-primary text-xs py-1 px-3 flex items-center gap-1">
+                    {reordering ? <RefreshCw size={12} className="animate-spin" /> : <Save size={12} />}
+                    {reordering ? 'Saving...' : 'Save Order'}
+                  </button>
+                </div>
+              )}
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead className="bg-gray-50">
                     <tr>
+                      <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase w-8">#</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Column Name</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Data Type</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Nullable</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Max Length</th>
+                      <th className="px-2 py-3 text-center text-xs font-medium text-gray-500 uppercase w-16">Order</th>
                       <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
                     {columns.map((col, idx) => (
-                      <tr key={idx} className="hover:bg-gray-50">
-                        <td className="px-4 py-3 text-sm font-medium text-gray-900">{col.column_name || col.name}</td>
-                        <td className="px-4 py-3 text-sm text-gray-600">{col.data_type || col.type}</td>
-                        <td className="px-4 py-3 text-sm">
+                      <tr key={idx}
+                        draggable
+                        onDragStart={() => onDragStart(idx)}
+                        onDragOver={(e) => onDragOver(e, idx)}
+                        onDragEnd={onDragEnd}
+                        className={`hover:bg-gray-50 cursor-grab active:cursor-grabbing ${dragIdx === idx ? 'bg-blue-50 opacity-60' : ''}`}>
+                        <td className="px-2 py-2 text-center">
+                          <GripVertical size={14} className="text-gray-300 inline" />
+                        </td>
+                        <td className="px-4 py-2 text-sm font-medium text-gray-900">{col.column_name || col.name}</td>
+                        <td className="px-4 py-2 text-sm text-gray-600">{col.data_type || col.type}</td>
+                        <td className="px-4 py-2 text-sm">
                           <span className={`px-2 py-0.5 rounded text-xs ${col.is_nullable === 'YES' || col.nullable ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'}`}>
                             {col.is_nullable === 'YES' || col.nullable ? 'Yes' : 'No'}
                           </span>
                         </td>
-                        <td className="px-4 py-3 text-sm text-gray-600">{col.max_length || col.character_maximum_length || '-'}</td>
-                        <td className="px-4 py-3 text-right">
+                        <td className="px-4 py-2 text-sm text-gray-600">{col.max_length || col.character_maximum_length || '-'}</td>
+                        <td className="px-2 py-2 text-center">
+                          <div className="flex items-center justify-center gap-0.5">
+                            <button onClick={() => moveColumn(idx, -1)} disabled={idx === 0}
+                              className="p-0.5 hover:bg-gray-200 rounded disabled:opacity-20" title="Move Up">
+                              <ArrowUp size={12} className="text-gray-500" />
+                            </button>
+                            <button onClick={() => moveColumn(idx, 1)} disabled={idx === columns.length - 1}
+                              className="p-0.5 hover:bg-gray-200 rounded disabled:opacity-20" title="Move Down">
+                              <ArrowDown size={12} className="text-gray-500" />
+                            </button>
+                          </div>
+                        </td>
+                        <td className="px-4 py-2 text-right">
                           <div className="flex items-center justify-end gap-1">
                             <button
                               onClick={() => { setSelectedColumn(col); setShowRenameColumn(true) }}

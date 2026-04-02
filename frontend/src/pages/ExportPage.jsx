@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Download, Filter, Plus, X, Search, RefreshCw, Settings, ChevronDown, ChevronLeft, ChevronRight, Database, Columns, Eye, List, FileDown, Bell, CheckCircle, Clock, AlertCircle, Trash2, Loader } from 'lucide-react'
+import { useSearchParams, useNavigate } from 'react-router-dom'
+import { Download, Filter, Plus, X, Search, RefreshCw, Settings, ChevronDown, ChevronLeft, ChevronRight, Database, Columns, Eye, List, FileDown, Bell, CheckCircle, Clock, AlertCircle, Trash2, Loader, ArrowLeft } from 'lucide-react'
 import { tablesAPI } from '@/services/api'
 import toast from 'react-hot-toast'
 
@@ -281,8 +282,11 @@ function formatDate(iso) {
 }
 
 export default function ExportPage() {
+  const [searchParams] = useSearchParams()
+  const navigate = useNavigate()
+  const fromChecklist = searchParams.get('from') === 'checklist'
   const [tables, setTables] = useState([])
-  const [selectedTable, setSelectedTable] = useState('')
+  const [selectedTable, setSelectedTable] = useState(searchParams.get('table') || '')
   const [schema, setSchema] = useState(null)
   const [selectedColumns, setSelectedColumns] = useState([])
   const [format, setFormat] = useState('xlsx')
@@ -353,7 +357,15 @@ export default function ExportPage() {
       tablesAPI.schema(selectedTable).then(r => {
         const s = r.data.data
         setSchema(s)
-        setSelectedColumns(s?.columns?.map(c => c.column_name) || [])
+        // Exclude system/auto-update columns by default
+        const sysCols = ['id', 'created_at', 'updated_at', 'created_by', 'updated_by', 'modified_at', 'modified_by', 'upload_datetime', 'upload_date', 'upload_time', 'uploaded_at', 'uploaded_by', 'insert_date', 'insert_datetime']
+        const cols = (s?.columns || []).filter(c => {
+          const name = c.column_name?.toLowerCase() || ''
+          const def_ = (c.default_value || '').toLowerCase()
+          const isAuto = def_.includes('getdate') || def_.includes('current_timestamp') || def_.includes('sysdatetime')
+          return !c.is_identity && !c.is_computed && !sysCols.includes(name) && !isAuto
+        }).map(c => c.column_name)
+        setSelectedColumns(cols)
         setFilters([])
         setDistinctValues({})
         setPreview(null)
@@ -499,6 +511,13 @@ export default function ExportPage() {
     <div className="h-[calc(100vh-56px)] flex flex-col -m-6 bg-slate-50">
       {/* Top Toolbar */}
       <div className="bg-white border-b px-3 py-1.5 flex items-center gap-2.5 flex-wrap">
+        {/* Back to Checklist */}
+        {fromChecklist && (
+          <button onClick={() => navigate('/data-validation/checklist')}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-indigo-200 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 transition-colors">
+            <ArrowLeft size={13}/> Back to Checklist
+          </button>
+        )}
         {/* Title */}
         <div className="flex items-center gap-1.5 mr-1.5">
           <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow">

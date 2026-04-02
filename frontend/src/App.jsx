@@ -1,5 +1,5 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
-import { useEffect } from 'react'
+import { useEffect, Component } from 'react'
 import useAuthStore from '@/store/authStore'
 import Layout from '@/components/layout/Layout'
 import LoginPage from '@/pages/LoginPage'
@@ -31,6 +31,32 @@ import GridBuilderPage from '@/pages/GridBuilderPage'
 import LookupArtMasterPage from '@/pages/LookupArtMasterPage'
 import PendAlcReportPage from '@/pages/PendAlcReportPage'
 import ChecklistPage from '@/pages/ChecklistPage'
+import TrendUploadPage from '@/pages/TrendUploadPage'
+import TrendReviewPage from '@/pages/TrendReviewPage'
+import TrendAdminPage from '@/pages/TrendAdminPage'
+import TrendDashboardPage from '@/pages/TrendDashboardPage'
+
+class ErrorBoundary extends Component {
+  constructor(props) { super(props); this.state = { error: null } }
+  static getDerivedStateFromError(error) { return { error } }
+  componentDidCatch(error, info) { console.error('ErrorBoundary caught:', error, info) }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ padding: 40, color: '#dc2626' }}>
+          <h2 style={{ marginBottom: 10 }}>Page Error</h2>
+          <pre style={{ whiteSpace: 'pre-wrap', fontSize: 13, background: '#fef2f2', padding: 16, borderRadius: 8 }}>
+            {this.state.error.message}{'\n'}{this.state.error.stack}
+          </pre>
+          <button onClick={() => this.setState({ error: null })} style={{ marginTop: 10, padding: '6px 16px', cursor: 'pointer' }}>
+            Retry
+          </button>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
 
 function ProtectedRoute({ children, permission }) {
   const { isAuthenticated, hasPermission } = useAuthStore()
@@ -74,6 +100,11 @@ export default function App() {
         {/* Data Preparation - Store Stock Grid Builder */}
         <Route path="data-prep/store-stock" element={<GridBuilderPage />} />
         <Route path="data-prep/lookup-art-master" element={<LookupArtMasterPage />} />
+        {/* Trends */}
+        <Route path="trends/dashboard" element={<ErrorBoundary><TrendDashboardPage /></ErrorBoundary>} />
+        <Route path="trends/upload" element={<ErrorBoundary><TrendUploadPage /></ErrorBoundary>} />
+        <Route path="trends/review" element={<ErrorBoundary><TrendReviewPage /></ErrorBoundary>} />
+        <Route path="trends/admin" element={<ErrorBoundary><TrendAdminPage /></ErrorBoundary>} />
         {/* Reports */}
         <Route path="reports/pend-alc" element={<PendAlcReportPage />} />
         {/* Allocations */}

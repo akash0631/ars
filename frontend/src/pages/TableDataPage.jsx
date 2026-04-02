@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, Download, Columns, RefreshCw } from 'lucide-react'
 import { tablesAPI, dataAPI, checklistAPI } from '@/services/api'
@@ -18,7 +18,9 @@ export default function TableDataPage() {
   const [page, setPage] = useState(1)
   const [pageSize] = useState(100)
   const [loading, setLoading] = useState(true)
+  const [serverFilters, setServerFilters] = useState(null)
   const { hasPermission } = useAuthStore()
+  const filterTimer = useRef(null)
 
   const loadSchema = async () => {
     try {
@@ -27,21 +29,47 @@ export default function TableDataPage() {
     } catch {}
   }
 
-  const loadData = async (p = page) => {
+  const loadData = async (p = page, filters = serverFilters) => {
     setLoading(true)
     try {
-      const { data } = await tablesAPI.data(tableName, { page: p, page_size: pageSize })
+      const params = { page: p, page_size: pageSize }
+      if (filters && Object.keys(filters).length > 0) {
+        params.filters = JSON.stringify(filters)
+      }
+      const { data } = await tablesAPI.data(tableName, params)
       setRowData(data.data?.data || [])
       setTotal(data.data?.total || 0)
     } finally { setLoading(false) }
   }
 
   useEffect(() => {
-    loadSchema(); loadData()
-    // Auto-stamp checklist when viewing from checklist
+    loadSchema(); loadData(1, null)
     if (fromChecklist) checklistAPI.stamp(tableName).catch(() => {})
   }, [tableName])
   useEffect(() => { loadData(page) }, [page])
+
+  // Convert ag-grid filter model to server filter format
+  const onFilterChanged = useCallback((params) => {
+    const model = params.api.getFilterModel()
+    if (!model || Object.keys(model).length === 0) {
+      setServerFilters(null)
+      setPage(1)
+      clearTimeout(filterTimer.current)
+      filterTimer.current = setTimeout(() => loadData(1, null), 300)
+      return
+    }
+    const filters = {}
+    Object.entries(model).forEach(([col, filterDef]) => {
+      if (filterDef.filterType === 'text') {
+        const type = filterDef.type || 'contains'
+        filters[col] = { type, filter: filterDef.filter }
+      }
+    })
+    setServerFilters(filters)
+    setPage(1)
+    clearTimeout(filterTimer.current)
+    filterTimer.current = setTimeout(() => loadData(1, filters), 400)
+  }, [tableName, pageSize])
 
   const columnDefs = useMemo(() => {
     if (!schema?.columns) return []
@@ -116,7 +144,7 @@ export default function TableDataPage() {
           columnDefs={columnDefs}
           defaultColDef={defaultColDef}
           onCellValueChanged={onCellValueChanged}
-          animateRows
+          onFilterChanged={onFilterChanged}
           undoRedoCellEditing
           enableCellChangeFlash
           pagination={false}

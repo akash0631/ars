@@ -1,9 +1,9 @@
 import { NavLink } from 'react-router-dom'
 import { 
   LayoutDashboard, Table2, Upload, PackageCheck, Users, Shield, Eye, ScrollText,
-  ChevronLeft, ChevronRight, Box, ChevronDown, FolderOpen, FilePlus, FileUp,
+  ChevronLeft, ChevronRight, Box, ChevronDown, FolderOpen, FilePlus, FileUp, Plus,
   FileDown, Edit3, Settings, Database, Columns, BarChart3, Cpu, Cog, Activity,
-  Clock, Truck, FileText, ClipboardCheck, ShieldCheck, LayoutGrid, Search
+  Clock, Truck, FileText, ClipboardCheck, ShieldCheck, LayoutGrid, Search, TrendingUp
 } from 'lucide-react'
 import useAuthStore from '@/store/authStore'
 import clsx from 'clsx'
@@ -228,6 +228,19 @@ export default function Sidebar({ collapsed, onToggle }) {
           title="Contribution %"
           icon={BarChart3}
           items={contributionItems}
+          collapsed={collapsed}
+          hasPermission={hasPermission}
+        />
+
+        {/* Trends submenu */}
+        <SubMenu
+          title="Trends"
+          icon={TrendingUp}
+          items={[
+            { label: 'Dashboard', path: '/trends/dashboard', icon: BarChart3 },
+            { label: 'Upload', path: '/trends/upload', icon: FileUp },
+            { label: 'Review', path: '/trends/review', icon: Eye },
+          ]}
           collapsed={collapsed}
           hasPermission={hasPermission}
         />

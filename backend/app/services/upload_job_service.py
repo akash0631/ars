@@ -344,6 +344,14 @@ def _run_upload_job(job_id: str, metadata: dict):
         db.commit()
         
     finally:
+        # Auto-delete uploaded file after processing
+        try:
+            if job and job.file_path and os.path.exists(job.file_path):
+                os.remove(job.file_path)
+                logger.info(f"[{job_id}] Cleaned up uploaded file: {job.file_path}")
+        except Exception as e:
+            logger.warning(f"[{job_id}] Failed to clean up file: {e}")
+
         db.close()
         # Cleanup cancellation flag
         _cancel_requested.pop(job_id, None)

@@ -1,11 +1,16 @@
 """
 Dynamic Table Management API Endpoints
 """
-from fastapi import APIRouter, Depends, HTTPException, Query, Body
+import io
+import os
+import logging
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Body
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import List, Dict, Any
-import io
+
+logger = logging.getLogger(__name__)
 
 from app.database.session import get_db
 from app.schemas.table_mgmt import CreateTableRequest, AlterTableRequest
@@ -316,18 +321,30 @@ async def get_export_job_status(
 @router.get("/export/jobs/{job_id}/download")
 async def download_export_job(
     job_id: str,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    """Download completed export job file."""
+    """Download completed export job file. File is auto-deleted after download."""
     from app.services.export_job_service import get_job_file
     from fastapi.responses import FileResponse
-    
+
     result = get_job_file(db, job_id)
     if not result:
         raise HTTPException(status_code=404, detail="File not found or job not completed")
-    
+
     filepath, filename = result
+
+    def _cleanup_file(path: str):
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+                logger.info(f"Auto-deleted export file after download: {path}")
+        except Exception as e:
+            logger.warning(f"Failed to auto-delete export file: {e}")
+
+    background_tasks.add_task(_cleanup_file, filepath)
+
     return FileResponse(
         path=filepath,
         filename=filename,
@@ -762,6 +779,121 @@ async def update_table_settings(
         return APIResponse(data={"table_name": table_name, "updated": True})
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# Column Reorder
+# ============================================================================
+
+@router.put("/{table_name}/reorder-columns", response_model=APIResponse)
+async def reorder_columns(
+    table_name: str,
+    body: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Reorder columns in a SQL Server table.
+    Uses CREATE new table -> copy data -> drop old -> rename approach.
+    """
+    from app.database.session import get_data_engine
+    from sqlalchemy import text as sa_text
+
+    new_order = body.get("columns", [])
+    if not new_order:
+        raise HTTPException(400, detail="columns list is required")
+
+    data_engine = get_data_engine()
+
+    try:
+        with data_engine.connect() as conn:
+            # Get current columns with full type info
+            rows = conn.execute(sa_text("""
+                SELECT COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH,
+                       NUMERIC_PRECISION, NUMERIC_SCALE, IS_NULLABLE,
+                       COLUMN_DEFAULT
+                FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_NAME = :tn
+                ORDER BY ORDINAL_POSITION
+            """), {"tn": table_name}).fetchall()
+
+            if not rows:
+                raise HTTPException(404, detail=f"Table '{table_name}' not found")
+
+            col_info = {}
+            for r in rows:
+                col_info[r[0]] = {
+                    "name": r[0], "data_type": r[1],
+                    "max_length": r[2], "precision": r[3], "scale": r[4],
+                    "nullable": r[5], "default": r[6],
+                }
+
+            # Validate all columns in new_order exist
+            existing = set(col_info.keys())
+            ordered = list(new_order)
+            # Add any missing columns at the end
+            for c in col_info:
+                if c not in ordered:
+                    ordered.append(c)
+
+            # Get primary key info
+            pk_row = conn.execute(sa_text("""
+                SELECT kc.name AS constraint_name,
+                       STRING_AGG(c.name, ',') WITHIN GROUP (ORDER BY ic.key_ordinal) AS pk_columns
+                FROM sys.key_constraints kc
+                INNER JOIN sys.index_columns ic ON kc.parent_object_id = ic.object_id AND kc.unique_index_id = ic.index_id
+                INNER JOIN sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
+                WHERE kc.type = 'PK' AND OBJECT_NAME(kc.parent_object_id) = :tn
+                GROUP BY kc.name
+            """), {"tn": table_name}).fetchone()
+
+            pk_name = pk_row[0] if pk_row else None
+            pk_cols = pk_row[1].split(",") if pk_row else []
+
+            # Build column definitions for new table
+            def build_col_def(cname):
+                info = col_info[cname]
+                dt = info["data_type"].upper()
+                if dt in ("NVARCHAR", "VARCHAR", "NCHAR", "CHAR"):
+                    ml = info["max_length"]
+                    type_sql = f"{dt}({ml})" if ml and ml > 0 else f"{dt}(MAX)"
+                elif dt in ("DECIMAL", "NUMERIC"):
+                    p = info["precision"] or 18
+                    s = info["scale"] or 0
+                    type_sql = f"{dt}({p},{s})"
+                else:
+                    type_sql = dt
+                null_sql = "NULL" if info["nullable"] == "YES" else "NOT NULL"
+                return f"[{cname}] {type_sql} {null_sql}"
+
+            col_defs = ", ".join(build_col_def(c) for c in ordered)
+            col_list = ", ".join(f"[{c}]" for c in ordered)
+            tmp_name = f"_tmp_reorder_{table_name}"
+
+            # Execute reorder: create tmp -> copy -> drop original -> rename
+            conn.execute(sa_text(f"CREATE TABLE [{tmp_name}] ({col_defs})"))
+            conn.execute(sa_text(f"INSERT INTO [{tmp_name}] ({col_list}) SELECT {col_list} FROM [{table_name}]"))
+            conn.execute(sa_text(f"DROP TABLE [{table_name}]"))
+            conn.execute(sa_text(f"EXEC sp_rename '{tmp_name}', '{table_name}'"))
+
+            # Recreate primary key if existed
+            if pk_cols:
+                pk_col_list = ", ".join(f"[{c}]" for c in pk_cols)
+                pk_constraint = pk_name or f"PK_{table_name}"
+                conn.execute(sa_text(
+                    f"ALTER TABLE [{table_name}] ADD CONSTRAINT [{pk_constraint}] PRIMARY KEY ({pk_col_list})"
+                ))
+
+            conn.commit()
+
+        logger.info(f"Columns reordered for {table_name} by {current_user.username}: {ordered}")
+        return APIResponse(message=f"Column order updated for {table_name}", data={"columns": ordered})
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Column reorder failed for {table_name}: {e}")
+        raise HTTPException(500, detail=f"Failed to reorder columns: {e}")
 
 
 # ============================================================================

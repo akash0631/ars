@@ -302,7 +302,7 @@ class FileUploadService:
         from app.core.config import get_settings
         from sqlalchemy import create_engine
         settings = get_settings()
-        data_engine = create_engine(settings.DATA_DB_URL)
+        data_engine = create_engine(settings.DATA_DATABASE_URL)
 
         row_changes = []
         for idx, row in df.iterrows():

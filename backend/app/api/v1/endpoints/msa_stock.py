@@ -56,11 +56,12 @@ def get_msa_columns(
     try:
         service = MSAService(db)
         
-        # Get columns and dates
+        # Get columns, dates, and source data date
         columns = service.get_available_columns()
         dates = service.get_available_dates()
-        
-        logger.info(f"✅ Retrieved {len(columns)} columns and {len(dates)} dates")
+        data_date = service.get_source_data_date()
+
+        logger.info(f"✅ Retrieved {len(columns)} columns and {len(dates)} dates, data_date={data_date}")
         logger.debug(f"Date samples: {dates[:5] if dates else 'None'}")
         
         # Get filter configs from database
@@ -98,7 +99,8 @@ def get_msa_columns(
             data={
                 "columns": columns or [],
                 "dates": dates or [],
-                "filter_configs": filter_configs
+                "filter_configs": filter_configs,
+                "data_date": data_date,
             },
             message=f"Retrieved {len(columns)} columns, {len(dates)} dates, {len(filter_configs)} presets"
         )
@@ -901,7 +903,7 @@ def get_stored_sequences(
 )
 def get_stored_results(
     sequence_id: int = Path(..., ge=1, description="Calculation sequence ID"),
-    table: str = Query("msa", regex="^(msa|msa_gen_clr|msa_gen_clr_var)$", description="Which result table to retrieve"),
+    table: str = Query("msa", pattern="^(msa|msa_gen_clr|msa_gen_clr_var)$", description="Which result table to retrieve"),
     db: Session = Depends(get_data_db),
     current_user: User = Depends(get_current_user)
 ):

@@ -72,6 +72,18 @@ class MSAService:
             logger.info(f"Using fallback dates (last 30 days), returned {len(dates)} dates")
             return dates
 
+    def get_source_data_date(self) -> Optional[str]:
+        """Return max DATE from the source table ET_MSA_STK."""
+        try:
+            row = self.db.execute(text(
+                "SELECT MAX(CAST([DATE] AS DATE)) FROM ET_MSA_STK WHERE [DATE] IS NOT NULL"
+            )).fetchone()
+            if row and row[0]:
+                return str(row[0]) if isinstance(row[0], str) else row[0].isoformat()
+        except Exception as e:
+            logger.warning(f"Could not get max date from ET_MSA_STK: {e}")
+        return None
+
     def get_distinct_values(
         self,
         column: str,

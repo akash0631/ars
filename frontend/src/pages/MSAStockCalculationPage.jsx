@@ -62,6 +62,7 @@ export default function MSAStockCalculationPage() {
   const [showAddColumnModal, setShowAddColumnModal] = useState(false);
   const [allAvailableColumns, setAllAvailableColumns] = useState([]);
   const [availableDates, setAvailableDates] = useState([]);
+  const [dataDate, setDataDate] = useState(null);
   const [distinctValues, setDistinctValues] = useState({});
   const [presetName, setPresetName] = useState('msa_filter');
   const [savedPresets, setSavedPresets] = useState({});
@@ -198,6 +199,7 @@ export default function MSAStockCalculationPage() {
           datesList = res.data.data.dates || [];
           columnsList = res.data.data.columns || [];
           configsList = res.data.data.filter_configs || [];
+          if (res.data.data.data_date) setDataDate(res.data.data.data_date);
         } else if (res.data) {
           console.warn('⚠️ Unexpected response structure:', res.data);
         }
@@ -791,16 +793,15 @@ export default function MSAStockCalculationPage() {
       </div>
 
       {/* Data freshness alert */}
-      {availableDates.length > 0 && (() => {
-        const latest = availableDates[0]
-        const diffDays = (Date.now() - new Date(latest).getTime()) / 86_400_000
+      {dataDate && (() => {
+        const diffDays = (Date.now() - new Date(dataDate).getTime()) / 86_400_000
         const isOk = diffDays < 2
-        const dateFmt = new Date(latest).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})
+        const dateFmt = new Date(dataDate).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})
         return (
           <div className={`flex items-center gap-2.5 px-3.5 py-2 rounded-lg text-xs font-medium border ${isOk ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-red-50 border-red-200 text-red-700'}`}>
             {isOk ? <CheckCircle2 size={14}/> : <AlertTriangle size={14}/>}
             <span>
-              <strong>VW_ET_MSA_STK_WITH_MASTER</strong> data date: <strong>{dateFmt}</strong>
+              <strong>ET_MSA_STK</strong> data date: <strong>{dateFmt}</strong>
               {isOk
                 ? ' — Data is up to date.'
                 : ` — Data is ${Math.floor(diffDays)} day${Math.floor(diffDays)>1?'s':''} old. Please update the source data.`}

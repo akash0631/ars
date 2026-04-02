@@ -41,6 +41,9 @@ from app.api.v1.endpoints.lookup_art_master import router as lookup_art_master_r
 # Data Checklist
 from app.api.v1.endpoints.checklist import router as checklist_router
 
+# Trends
+from app.api.v1.endpoints.trends import router as trends_router
+
 # Reports
 from app.api.v1.endpoints.reports import router as reports_router
 
@@ -89,6 +92,9 @@ api_router.include_router(dashboard_router)
 
 # Data Checklist
 api_router.include_router(checklist_router)
+
+# Trends
+api_router.include_router(trends_router)
 
 # Reports
 api_router.include_router(reports_router)
