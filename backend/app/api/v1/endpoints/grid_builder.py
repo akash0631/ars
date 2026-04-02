@@ -101,6 +101,7 @@ def _ensure_grid_table(engine):
                     kpi_filter        NVARCHAR(200) NULL,
                     output_table      NVARCHAR(200) NOT NULL,
                     status            NVARCHAR(20)  NOT NULL DEFAULT 'Active',
+                    seq               INT           NOT NULL DEFAULT 0,
                     created_at        DATETIME      NOT NULL DEFAULT GETDATE(),
                     updated_at        DATETIME      NOT NULL DEFAULT GETDATE(),
                     last_run_at       DATETIME      NULL,
@@ -111,9 +112,26 @@ def _ensure_grid_table(engine):
                 )
             END
         """)
+        # Add seq column if missing (for existing tables)
+        _run(c, f"""
+            IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+                           WHERE TABLE_NAME='{GRID_TABLE}' AND COLUMN_NAME='seq')
+            BEGIN
+                ALTER TABLE {GRID_TABLE} ADD seq INT NOT NULL DEFAULT 0
+            END
+        """)
+        # Auto-assign sequence where seq=0 based on id order
+        _run(c, f"""
+            ;WITH CTE AS (
+                SELECT id, seq, ROW_NUMBER() OVER (ORDER BY id) AS rn
+                FROM {GRID_TABLE} WHERE seq = 0
+            )
+            UPDATE CTE SET seq = rn WHERE seq = 0
+        """)
 
 
 def _row_to_dict(r) -> dict:
+    """Convert a row tuple to dict. Column order must match SELECT statements."""
     hier = r[3]
     try:
         hier = json.loads(hier) if hier else []
@@ -127,12 +145,13 @@ def _row_to_dict(r) -> dict:
         "kpi_filter":        r[4],
         "output_table":      r[5],
         "status":            r[6],
-        "created_at":        r[7].isoformat() if r[7] else None,
-        "updated_at":        r[8].isoformat() if r[8] else None,
-        "last_run_at":       r[9].isoformat() if r[9] else None,
-        "last_run_status":   r[10],
-        "last_run_rows":     r[11],
-        "last_run_error":    r[12],
+        "seq":               r[7],
+        "created_at":        r[8].isoformat() if r[8] else None,
+        "updated_at":        r[9].isoformat() if r[9] else None,
+        "last_run_at":       r[10].isoformat() if r[10] else None,
+        "last_run_status":   r[11],
+        "last_run_rows":     r[12],
+        "last_run_error":    r[13],
     }
 
 
@@ -366,11 +385,11 @@ def list_grids(current_user: User = Depends(get_current_user)):
     with de.connect() as conn:
         rows = conn.execute(text(f"""
             SELECT id, grid_name, description, hierarchy_columns,
-                   kpi_filter, output_table, status,
+                   kpi_filter, output_table, status, seq,
                    created_at, updated_at,
                    last_run_at, last_run_status, last_run_rows, last_run_error
             FROM {GRID_TABLE}
-            ORDER BY id ASC
+            ORDER BY seq ASC, id ASC
         """)).fetchall()
     grids = [_row_to_dict(r) for r in rows]
     return APIResponse(success=True, message=f"{len(grids)} grid(s) found",
@@ -383,11 +402,13 @@ def create_grid(payload: GridCreate, current_user: User = Depends(get_current_us
     _ensure_grid_table(de)
     hier_json = json.dumps(payload.hierarchy_columns)
     with de.connect() as conn:
+        # Auto-assign next sequence
+        max_seq = conn.execute(text(f"SELECT ISNULL(MAX(seq),0) FROM {GRID_TABLE}")).scalar() or 0
         conn.execute(text(f"""
             INSERT INTO {GRID_TABLE}
-                (grid_name, description, hierarchy_columns, kpi_filter, output_table, status, created_at, updated_at)
+                (grid_name, description, hierarchy_columns, kpi_filter, output_table, status, seq, created_at, updated_at)
             VALUES
-                (:name, :desc, :hier, :kpi, :out, :status, GETDATE(), GETDATE())
+                (:name, :desc, :hier, :kpi, :out, :status, :seq, GETDATE(), GETDATE())
         """), {
             "name":   payload.grid_name,
             "desc":   payload.description,
@@ -395,6 +416,7 @@ def create_grid(payload: GridCreate, current_user: User = Depends(get_current_us
             "kpi":    payload.kpi_filter,
             "out":    payload.output_table,
             "status": payload.status,
+            "seq":    max_seq + 1,
         })
         conn.commit()
     return APIResponse(success=True, message=f"Grid '{payload.grid_name}' created.",
@@ -459,7 +481,7 @@ def run_grid(grid_id: int, current_user: User = Depends(get_current_user)):
     with de.connect() as conn:
         row = conn.execute(text(f"""
             SELECT id, grid_name, description, hierarchy_columns,
-                   kpi_filter, output_table, status,
+                   kpi_filter, output_table, status, seq,
                    created_at, updated_at,
                    last_run_at, last_run_status, last_run_rows, last_run_error
             FROM {GRID_TABLE} WHERE id=:id
@@ -503,6 +525,22 @@ def run_grid(grid_id: int, current_user: User = Depends(get_current_user)):
         data={"rows_inserted": rows, "output_table": grid["output_table"], "status": status})
 
 
+@router.put("/reorder", response_model=APIResponse)
+def reorder_grids(body: Dict[str, Any], current_user: User = Depends(get_current_user)):
+    """Update sequence order for grids. Body: {sequence: [{id, seq}, ...]}"""
+    seq_list = body.get("sequence", [])
+    if not seq_list:
+        raise HTTPException(400, detail="sequence list is required")
+    de = get_data_engine()
+    _ensure_grid_table(de)
+    with de.connect() as conn:
+        for item in seq_list:
+            conn.execute(text(f"UPDATE {GRID_TABLE} SET seq=:seq, updated_at=GETDATE() WHERE id=:id"),
+                         {"seq": item["seq"], "id": item["id"]})
+        conn.commit()
+    return APIResponse(success=True, message=f"Sequence updated for {len(seq_list)} grid(s)")
+
+
 @router.post("/run-all", response_model=APIResponse)
 def run_all_active(current_user: User = Depends(get_current_user)):
     de = get_data_engine()
@@ -511,10 +549,10 @@ def run_all_active(current_user: User = Depends(get_current_user)):
     with de.connect() as conn:
         rows = conn.execute(text(f"""
             SELECT id, grid_name, description, hierarchy_columns,
-                   kpi_filter, output_table, status,
+                   kpi_filter, output_table, status, seq,
                    created_at, updated_at,
                    last_run_at, last_run_status, last_run_rows, last_run_error
-            FROM {GRID_TABLE} WHERE status='Active' ORDER BY id ASC
+            FROM {GRID_TABLE} WHERE status='Active' ORDER BY seq ASC, id ASC
         """)).fetchall()
 
     active_grids = [_row_to_dict(r) for r in rows]

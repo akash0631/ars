@@ -128,9 +128,14 @@ def get_checklist(current_user: User = Depends(get_current_user)):
         )).fetchall()
 
         items = []
+        dropped_ids = []
         for r in rows:
             tbl = r[1]
             exists = _table_exists(conn, tbl)
+            if not exists:
+                # Auto-remove checklist items for dropped tables
+                dropped_ids.append(r[0])
+                continue
             items.append({
                 "id":              r[0],
                 "table_name":      tbl,
@@ -144,6 +149,13 @@ def get_checklist(current_user: User = Depends(get_current_user)):
                 "table_exists":    exists,
                 "row_count":       _row_count(conn, tbl) if exists else None,
             })
+
+        # Clean up items for tables that no longer exist
+        if dropped_ids:
+            for did in dropped_ids:
+                conn.execute(text(f"DELETE FROM {TABLE} WHERE id = :id"), {"id": did})
+            conn.commit()
+            logger.info(f"Auto-removed {len(dropped_ids)} checklist items for dropped tables")
 
     # Collect distinct groups for the frontend
     groups = sorted(set(i["group_name"] for i in items))

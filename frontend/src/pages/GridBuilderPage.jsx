@@ -317,6 +317,8 @@ export default function GridBuilderPage() {
   const [runningAll,  setRunningAll] = useState(false)
   const [modalOpen,   setModalOpen]  = useState(false)
   const [editing,     setEditing]    = useState(null)
+  const [seqChanged,  setSeqChanged] = useState(false)
+  const [savingSeq,   setSavingSeq]  = useState(false)
   const [runResults,  setRunResults] = useState(null)
   const [deleteConf,  setDeleteConf] = useState(null)   // id to confirm delete
 
@@ -330,9 +332,32 @@ export default function GridBuilderPage() {
       ])
       setGrids(gRes.data.data.grids || [])
       setAvailCols(cRes.data.data.columns || ['MATNR','WERKS'])
+      setSeqChanged(false)
     } catch {} finally { setLoading(false) }
   }, [])
   useEffect(() => { load() }, [load])
+
+  /* sequence management */
+  const moveGrid = (idx, dir) => {
+    const newIdx = idx + dir
+    if (newIdx < 0 || newIdx >= grids.length) return
+    const updated = [...grids]
+    const [moved] = updated.splice(idx, 1)
+    updated.splice(newIdx, 0, moved)
+    setGrids(updated)
+    setSeqChanged(true)
+  }
+
+  const saveSequence = async () => {
+    setSavingSeq(true)
+    try {
+      const sequence = grids.map((g, i) => ({ id: g.id, seq: i + 1 }))
+      await gridBuilderAPI.reorder(sequence)
+      setSeqChanged(false)
+      toast.success('Sequence saved')
+    } catch { toast.error('Failed to save sequence') }
+    finally { setSavingSeq(false) }
+  }
 
   /* create / update */
   const handleSave = async (form) => {
@@ -429,7 +454,13 @@ export default function GridBuilderPage() {
             {grids.length} grid{grids.length!==1?'s':''} &nbsp;·&nbsp;
             <span style={{ color:C.green }}>{activeCount} active</span>
           </span>
-          <div style={{ display:'flex', gap:8 }}>
+          <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+            {seqChanged && (
+              <Btn onClick={saveSequence} disabled={savingSeq} color="amber">
+                {savingSeq ? <Loader size={13} style={{ animation:'spin 1s linear infinite' }}/> : <Save size={13}/>}
+                Save Sequence
+              </Btn>
+            )}
             <Btn onClick={() => { setEditing(null); setModalOpen(true) }} color="primary">
               <Plus size={13}/> New Grid
             </Btn>
@@ -461,7 +492,7 @@ export default function GridBuilderPage() {
             <table style={{ width:'100%', borderCollapse:'collapse', fontSize:13, minWidth:800 }}>
               <thead>
                 <tr style={{ background:'#f1f5f9', borderBottom:`2px solid ${C.cardBorder}` }}>
-                  {['Grid Name','Output Table','Hierarchy Cols','KPI Filter',
+                  {['#','Grid Name','Output Table','Hierarchy Cols','KPI Filter',
                     'Last Run','Rows','Status','Actions'].map(h => (
                     <th key={h} style={{ padding:'9px 14px', textAlign:'left',
                       fontSize:11, fontWeight:700, color:C.textSub,
@@ -481,6 +512,22 @@ export default function GridBuilderPage() {
                       background: idx%2===0 ? C.card : C.rowAlt,
                       transition:'background .1s',
                     }}>
+                      {/* Sequence */}
+                      <td style={{ padding:'6px 8px', textAlign:'center', width:60 }}>
+                        <div style={{ display:'flex', alignItems:'center', gap:2, justifyContent:'center' }}>
+                          <div style={{ display:'flex', flexDirection:'column', gap:0 }}>
+                            <button onClick={() => moveGrid(idx, -1)} disabled={idx === 0}
+                              style={{ background:'none', border:'none', cursor: idx === 0 ? 'default' : 'pointer', padding:0, opacity: idx === 0 ? .2 : .6 }}>
+                              <ChevronUp size={12} />
+                            </button>
+                            <button onClick={() => moveGrid(idx, 1)} disabled={idx === grids.length - 1}
+                              style={{ background:'none', border:'none', cursor: idx === grids.length - 1 ? 'default' : 'pointer', padding:0, opacity: idx === grids.length - 1 ? .2 : .6 }}>
+                              <ChevronDown size={12} />
+                            </button>
+                          </div>
+                          <span style={{ fontSize:12, fontWeight:700, color:C.textMuted }}>{idx + 1}</span>
+                        </div>
+                      </td>
                       {/* Grid name */}
                       <td style={{ padding:'10px 14px' }}>
                         <div style={{ fontWeight:700, color:C.text }}>{g.grid_name}</div>

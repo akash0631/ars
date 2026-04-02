@@ -281,6 +281,7 @@ export const gridBuilderAPI = {
   deleteGrid:  (id)         => api.delete(`/grid-builder/grids/${id}`),
   runGrid:     (id)         => api.post(`/grid-builder/grids/${id}/run`),
   runAll:      ()           => api.post('/grid-builder/run-all'),
+  reorder:     (sequence)   => api.put('/grid-builder/reorder', { sequence }),
 }
 
 // ============== Lookup Art Master (Data Preparation) ==============
