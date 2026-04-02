@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, Download, Columns, RefreshCw } from 'lucide-react'
-import { tablesAPI, dataAPI } from '@/services/api'
+import { tablesAPI, dataAPI, checklistAPI } from '@/services/api'
 import { AgGridReact } from 'ag-grid-react'
 import 'ag-grid-community/styles/ag-grid.css'
 import 'ag-grid-community/styles/ag-theme-alpine.css'
@@ -36,7 +36,11 @@ export default function TableDataPage() {
     } finally { setLoading(false) }
   }
 
-  useEffect(() => { loadSchema(); loadData() }, [tableName])
+  useEffect(() => {
+    loadSchema(); loadData()
+    // Auto-stamp checklist when viewing from checklist
+    if (fromChecklist) checklistAPI.stamp(tableName).catch(() => {})
+  }, [tableName])
   useEffect(() => { loadData(page) }, [page])
 
   const columnDefs = useMemo(() => {
@@ -73,8 +77,9 @@ export default function TableDataPage() {
         updates: { [params.colDef.field]: params.newValue },
       })
       toast.success('Cell updated')
+      if (fromChecklist) checklistAPI.stamp(tableName).catch(() => {})
     } catch { params.api.undoCellEditing() }
-  }, [schema, tableName])
+  }, [schema, tableName, fromChecklist])
 
   const exportCSV = () => {
     const headers = schema?.columns?.map(c => c.column_name) || []
