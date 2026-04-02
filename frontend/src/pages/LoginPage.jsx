@@ -25,7 +25,7 @@ export default function LoginPage() {
             <Box size={24} className="text-white" />
           </div>
           <h1 className="text-2xl font-bold text-white">ARS</h1>
-          <p className="text-slate-400 text-[12px] mt-0.5">Allocation & Retail System</p>
+          <p className="text-slate-400 text-[12px] mt-0.5">Auto Replenishment System</p>
         </div>
         <form onSubmit={handleSubmit} className="card p-6 space-y-4">
           <div>

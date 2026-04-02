@@ -31,8 +31,8 @@ from app.api.v1.endpoints.bdc import router as bdc_router
 # Phase 5: Settings
 from app.api.v1.endpoints.settings import router as settings_router
 
-# Phase 6b: Store Stock / Data Validation
-from app.api.v1.endpoints.store_stock import router as store_stock_router
+# Phase 6b: SLOC Validation / Data Validation
+from app.api.v1.endpoints.sloc_validation import router as store_stock_router
 from app.api.v1.endpoints.grid_builder import router as grid_builder_router
 
 # Phase 7: Lookup Art Master

@@ -88,6 +88,11 @@ export const rlsAPI = {
   addRegionAccess: (data) => api.post('/rls/region-access', data),
   columnRestrictions: (table) => api.get(`/rls/column-restrictions/${table}`),
   addColumnRestrictions: (data) => api.post('/rls/column-restrictions', data),
+  bulkColumnRestrictions: (data) => api.post('/rls/column-restrictions/bulk', data),
+  deleteColumnRestriction: (id) => api.delete(`/rls/column-restrictions/${id}`),
+  tableAccess:          (table) => api.get(`/rls/table-access/${table}`),
+  bulkTableAccess:      (data) => api.post('/rls/table-access/bulk', data),
+  tableAccessByRole:    (roleId) => api.get(`/rls/table-access-by-role/${roleId}`),
 }
 
 // ============== Tables ==============

@@ -7,7 +7,7 @@ from typing import Optional, List
 from sqlalchemy.orm import Session
 from loguru import logger
 
-from app.models.rbac import User, UserRole, Role
+from app.models.rbac import User, UserRole, Role, Permission, RolePermission
 from app.security.password import hash_password, verify_password
 from app.security.jwt_handler import (
     create_access_token, create_refresh_token, verify_refresh_token
@@ -344,3 +344,60 @@ def create_super_admin_if_needed(db: Session):
 
     db.commit()
     logger.info(f"Super admin created: {settings.SUPER_ADMIN_USERNAME}")
+
+
+def seed_permissions_if_needed(db: Session):
+    """Seed all module permissions on startup. Idempotent — skips existing."""
+    ALL_PERMISSIONS = [
+        # (name, code, module, action, resource)
+        ("View Data Tables", "DATA_VIEW", "data", "READ", "*"),
+        ("Use Data Editor", "DATA_EDITOR", "data", "UPDATE", "*"),
+        ("View Jobs Dashboard", "JOBS_VIEW", "data", "READ", "jobs"),
+        ("View MSA Stock", "MSA_VIEW", "data_prep", "READ", "msa"),
+        ("Execute MSA Calculation", "MSA_EXECUTE", "data_prep", "CREATE", "msa"),
+        ("View BDC Creation", "BDC_VIEW", "data_prep", "READ", "bdc"),
+        ("Execute BDC Creation", "BDC_EXECUTE", "data_prep", "CREATE", "bdc"),
+        ("View Grid Builder", "GRID_VIEW", "data_prep", "READ", "grid_builder"),
+        ("Run Grid Builder", "GRID_RUN", "data_prep", "CREATE", "grid_builder"),
+        ("Manage Grid Builder", "GRID_MANAGE", "data_prep", "UPDATE", "grid_builder"),
+        ("View Lookup Art Master", "LOOKUP_VIEW", "data_prep", "READ", "lookup"),
+        ("Manage Contrib Presets", "CONTRIB_PRESETS", "contribution", "UPDATE", "contrib_presets"),
+        ("Manage Contrib Mappings", "CONTRIB_MAPPINGS", "contribution", "UPDATE", "contrib_mappings"),
+        ("Execute Contribution", "CONTRIB_EXECUTE", "contribution", "CREATE", "contrib_execute"),
+        ("Review Contribution", "CONTRIB_REVIEW", "contribution", "READ", "contrib_review"),
+        ("View Trends Dashboard", "TRENDS_DASHBOARD", "trends", "READ", "trends"),
+        ("Upload Trend Data", "TRENDS_UPLOAD", "trends", "CREATE", "trends"),
+        ("Review Trend Data", "TRENDS_REVIEW", "trends", "READ", "trends"),
+        ("View Pending Allocation Report", "REPORTS_PEND_ALC", "reports", "READ", "reports"),
+        ("View Data Checklist", "CHECKLIST_VIEW", "validation", "READ", "checklist"),
+        ("Manage Data Checklist", "CHECKLIST_MANAGE", "validation", "UPDATE", "checklist"),
+        ("View Store SLOC Validation", "STORE_SLOC_VIEW", "validation", "READ", "store_sloc"),
+    ]
+
+    added = 0
+    for name, code, module, action, resource in ALL_PERMISSIONS:
+        exists = db.query(Permission).filter(Permission.permission_code == code).first()
+        if not exists:
+            db.add(Permission(
+                permission_name=name, permission_code=code,
+                module=module, action=action, resource=resource,
+            ))
+            added += 1
+
+    if added:
+        db.commit()
+        logger.info(f"Seeded {added} new permissions")
+
+        # Assign all new permissions to SUPER_ADMIN
+        super_role = db.query(Role).filter(Role.role_code == "SUPER_ADMIN").first()
+        if super_role:
+            all_perms = db.query(Permission).filter(Permission.is_active == True).all()
+            existing_perm_ids = {rp.permission_id for rp in
+                db.query(RolePermission).filter(RolePermission.role_id == super_role.id).all()}
+            for p in all_perms:
+                if p.id not in existing_perm_ids:
+                    db.add(RolePermission(role_id=super_role.id, permission_id=p.id, granted_by="SYSTEM"))
+            db.commit()
+            logger.info("Assigned new permissions to SUPER_ADMIN")
+    else:
+        logger.info("All permissions already seeded")

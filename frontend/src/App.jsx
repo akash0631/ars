@@ -80,30 +80,29 @@ export default function App() {
       <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
         <Route index element={<DashboardPage />} />
         {/* Data Management */}
-        <Route path="tables" element={<TablesPage />} />
+        <Route path="tables" element={<ProtectedRoute permission="DATA_VIEW"><TablesPage /></ProtectedRoute>} />
         <Route path="tables/create" element={<ProtectedRoute permission="TABLE_CREATE"><CreateTablePage /></ProtectedRoute>} />
-        <Route path="tables/:tableName" element={<TableDataPage />} />
-        <Route path="upload" element={<UploadPage />} />
-        <Route path="export" element={<ExportPage />} />
-        <Route path="jobs" element={<JobsDashboardPage />} />
-        <Route path="editor" element={<DataEditorPage />} />
-        {/* Pending */}
+        <Route path="tables/:tableName" element={<ProtectedRoute permission="DATA_VIEW"><TableDataPage /></ProtectedRoute>} />
+        <Route path="upload" element={<ProtectedRoute permission="DATA_UPLOAD"><UploadPage /></ProtectedRoute>} />
+        <Route path="export" element={<ProtectedRoute permission="DATA_EXPORT"><ExportPage /></ProtectedRoute>} />
+        <Route path="jobs" element={<ProtectedRoute permission="JOBS_VIEW"><JobsDashboardPage /></ProtectedRoute>} />
+        <Route path="editor" element={<ProtectedRoute permission="DATA_EDITOR"><DataEditorPage /></ProtectedRoute>} />
         {/* Data Preparation */}
-        <Route path="msa" element={<MSAStockCalculationPage />} />
-        <Route path="contribution/presets" element={<ContribPresetsPage />} />
-        <Route path="contribution/mappings" element={<ContribMappingsPage />} />
-        <Route path="contribution/execute" element={<ContribExecutePage />} />
-        <Route path="contribution/review" element={<ContribReviewPage />} />
-        <Route path="bdc" element={<BDCCreationPage />} />
-        <Route path="data-validation/store-sloc" element={<StoreStockPage />} />
-        <Route path="data-validation/checklist" element={<ChecklistPage />} />
-        {/* Data Preparation - Store Stock Grid Builder */}
-        <Route path="data-prep/store-stock" element={<GridBuilderPage />} />
-        <Route path="data-prep/lookup-art-master" element={<LookupArtMasterPage />} />
+        <Route path="msa" element={<ProtectedRoute permission="MSA_VIEW"><MSAStockCalculationPage /></ProtectedRoute>} />
+        <Route path="contribution/presets" element={<ProtectedRoute permission="CONTRIB_PRESETS"><ContribPresetsPage /></ProtectedRoute>} />
+        <Route path="contribution/mappings" element={<ProtectedRoute permission="CONTRIB_MAPPINGS"><ContribMappingsPage /></ProtectedRoute>} />
+        <Route path="contribution/execute" element={<ProtectedRoute permission="CONTRIB_EXECUTE"><ContribExecutePage /></ProtectedRoute>} />
+        <Route path="contribution/review" element={<ProtectedRoute permission="CONTRIB_REVIEW"><ContribReviewPage /></ProtectedRoute>} />
+        <Route path="bdc" element={<ProtectedRoute permission="BDC_VIEW"><BDCCreationPage /></ProtectedRoute>} />
+        <Route path="data-validation/store-sloc" element={<ProtectedRoute permission="STORE_SLOC_VIEW"><StoreStockPage /></ProtectedRoute>} />
+        <Route path="data-validation/checklist" element={<ProtectedRoute permission="CHECKLIST_VIEW"><ChecklistPage /></ProtectedRoute>} />
+        {/* Data Preparation - Grid Builder */}
+        <Route path="data-prep/store-stock" element={<ProtectedRoute permission="GRID_VIEW"><GridBuilderPage /></ProtectedRoute>} />
+        <Route path="data-prep/lookup-art-master" element={<ProtectedRoute permission="LOOKUP_VIEW"><LookupArtMasterPage /></ProtectedRoute>} />
         {/* Trends */}
-        <Route path="trends/dashboard" element={<ErrorBoundary><TrendDashboardPage /></ErrorBoundary>} />
-        <Route path="trends/upload" element={<ErrorBoundary><TrendUploadPage /></ErrorBoundary>} />
-        <Route path="trends/review" element={<ErrorBoundary><TrendReviewPage /></ErrorBoundary>} />
+        <Route path="trends/dashboard" element={<ProtectedRoute permission="TRENDS_DASHBOARD"><ErrorBoundary><TrendDashboardPage /></ErrorBoundary></ProtectedRoute>} />
+        <Route path="trends/upload" element={<ProtectedRoute permission="TRENDS_UPLOAD"><ErrorBoundary><TrendUploadPage /></ErrorBoundary></ProtectedRoute>} />
+        <Route path="trends/review" element={<ProtectedRoute permission="TRENDS_REVIEW"><ErrorBoundary><TrendReviewPage /></ErrorBoundary></ProtectedRoute>} />
         <Route path="trends/admin" element={<ErrorBoundary><TrendAdminPage /></ErrorBoundary>} />
         {/* Reports */}
         <Route path="reports/pend-alc" element={<PendAlcReportPage />} />

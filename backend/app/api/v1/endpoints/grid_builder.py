@@ -182,44 +182,91 @@ def _get_master_product_columns(engine) -> List[str]:
 # Each entry defines a lookup join to run after the pivot INSERT.
 # To add a new lookup: copy an entry and edit the fields.
 #
-#   lookup_table : source table name
-#   columns      : list of columns to pull from lookup_table
-#   col_type     : SQL type for new columns (default NVARCHAR(200))
+#   lookup_table : source table name — supports templates:
+#                  {HIER_LAST}  = last hierarchy column name (e.g. MAJ_CAT, RNG_SEG)
+#                  {HIER_2}     = 2nd hierarchy column
+#                  {HIER_3}     = 3rd hierarchy column
+#                  Example: "Master_CONT_{HIER_LAST}" → "Master_CONT_RNG_SEG"
+#   columns      : list of columns to pull (empty [] = filter only, ["*"] = all non-key cols)
 #   join_on      : dict mapping {output_table_col: lookup_table_col}
+#                  supports {HIER_LAST} in values too
 #   requires     : list of hierarchy columns that must be present (uppercase)
+#   filter       : (optional) {"column": "COL", "value": "1"}
+#                  After join, DELETE rows where column != value
 #
 POST_PIVOT_LOOKUPS = [
+    # 1. Filter: keep only stores where LISTING=1 in Master_ALC_INPUT_ST_MASTER
+    {
+        "lookup_table": "Master_ALC_INPUT_ST_MASTER",
+        "columns":      ["LISTING"],
+        "join_on":      {"WERKS": "ST_CD"},
+        "requires":     ["WERKS"],
+        "filter":       {"column": "LISTING", "value": "1"},
+    },
+    # 2. Add DISP_Q, DPN from Master_ALC_INPUT_ST_MAJ_CAT
     {
         "lookup_table": "Master_ALC_INPUT_ST_MAJ_CAT",
         "columns":      ["DISP_Q", "DPN"],
-        "col_type":     "NVARCHAR(200)",
         "join_on":      {"WERKS": "ST_CD", "MAJ_CAT": "MAJ_CAT"},
         "requires":     ["WERKS", "MAJ_CAT"],
     },
+    # 3. Dynamic: join contribution data from Master_CONT_{last hierarchy col}
+    #    Grid MJ (WERKS, MAJ_CAT)       → Master_CONT_MAJ_CAT
+    #    Grid MJ_SEG (WERKS, MAJ_CAT, RNG_SEG) → Master_CONT_RNG_SEG
+    {
+        "lookup_table": "Master_CONT_{HIER_LAST}",
+        "columns":      ["*"],
+        "join_on":      {"WERKS": "ST_CD", "{HIER_LAST}": "{HIER_LAST}"},
+        "requires":     ["WERKS"],
+    },
     # ── Add more lookups below ──────────────────────────────────────────
-    # {
-    #     "lookup_table": "Master_ANOTHER_TABLE",
-    #     "columns":      ["COL_A", "COL_B"],
-    #     "col_type":     "NVARCHAR(255)",
-    #     "join_on":      {"WERKS": "STORE_CODE", "MAJ_CAT": "CATEGORY"},
-    #     "requires":     ["WERKS", "MAJ_CAT"],
-    # },
 ]
+
+
+def _resolve_template(template: str, hier_cols: List[str]) -> str:
+    """Resolve {HIER_LAST}, {HIER_2}, {HIER_3} etc. in config strings."""
+    result = template
+    if "{HIER_LAST}" in result and hier_cols:
+        result = result.replace("{HIER_LAST}", hier_cols[-1])
+    for i, col in enumerate(hier_cols):
+        result = result.replace(f"{{HIER_{i}}}", col)
+        result = result.replace(f"{{HIER_{i+1}}}", col)  # 1-based
+    return result
+
+
+def _get_col_type_sql(conn, table_name: str, col_name: str) -> str:
+    """Get SQL type string for a column from INFORMATION_SCHEMA."""
+    row = conn.execute(text(
+        "SELECT DATA_TYPE, CHARACTER_MAXIMUM_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE "
+        "FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = :tbl AND COLUMN_NAME = :col"
+    ), {"tbl": table_name, "col": col_name}).fetchone()
+    if not row:
+        return "NVARCHAR(255)"
+    dt = row[0].upper()
+    if dt in ("NVARCHAR", "VARCHAR", "NCHAR", "CHAR"):
+        ml = row[1]
+        return f"{dt}({ml})" if ml and ml > 0 else f"{dt}(MAX)"
+    elif dt in ("DECIMAL", "NUMERIC"):
+        return f"{dt}({row[2] or 18},{row[3] or 2})"
+    return dt
 
 
 def _apply_post_lookups(conn, out_table: str, hier_cols: List[str]):
     """
     After pivot INSERT, join lookup tables and add extra columns.
     Reads config from POST_PIVOT_LOOKUPS list above.
+    Supports templates: {HIER_LAST}, {HIER_2} resolved from grid's hierarchy.
+    Supports ["*"] to pull all non-join columns from lookup table.
     """
-    hier_upper = {c.upper(): c for c in hier_cols}  # UPPER -> actual name
+    hier_upper = {c.upper(): c for c in hier_cols}
 
     for cfg in POST_PIVOT_LOOKUPS:
         # Check all required hierarchy columns are present
         if not all(r in hier_upper for r in cfg["requires"]):
             continue
 
-        lookup_table = cfg["lookup_table"]
+        # Resolve template in table name
+        lookup_table = _resolve_template(cfg["lookup_table"], hier_cols)
 
         # Check lookup table exists in DB
         exists = conn.execute(text(
@@ -229,30 +276,65 @@ def _apply_post_lookups(conn, out_table: str, hier_cols: List[str]):
             logger.warning(f"Post-lookup skipped: table '{lookup_table}' not found")
             continue
 
-        col_type = cfg.get("col_type", "NVARCHAR(200)")
+        # Resolve template in join_on keys and values
+        join_on = {}
+        for out_col, lkp_col in cfg["join_on"].items():
+            resolved_out = _resolve_template(out_col, hier_cols)
+            resolved_lkp = _resolve_template(lkp_col, hier_cols)
+            join_on[resolved_out] = resolved_lkp
 
-        # Add columns to output table if missing
-        for col in cfg["columns"]:
-            col_exists = conn.execute(text(
-                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS "
-                "WHERE TABLE_NAME = :tbl AND COLUMN_NAME = :col"
-            ), {"tbl": out_table, "col": col}).scalar() > 0
-            if not col_exists:
+        # Resolve columns: ["*"] = all columns from lookup except join-target columns
+        columns = cfg["columns"]
+        if columns == ["*"]:
+            all_lkp_cols = conn.execute(text(
+                "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
+                "WHERE TABLE_NAME = :tbl ORDER BY ORDINAL_POSITION"
+            ), {"tbl": lookup_table}).fetchall()
+            join_target_cols = {v.upper() for v in join_on.values()}
+            columns = [r[0] for r in all_lkp_cols if r[0].upper() not in join_target_cols]
+
+        if not columns:
+            logger.info(f"Post-lookup skipped: no columns to add from {lookup_table}")
+            continue
+
+        # Get existing output columns to avoid duplicates
+        existing_out_cols = {r[0].upper() for r in conn.execute(text(
+            "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = :tbl"
+        ), {"tbl": out_table}).fetchall()}
+
+        # Add missing columns to output table (using real types from lookup)
+        for col in columns:
+            if col.upper() not in existing_out_cols:
+                col_type = _get_col_type_sql(conn, lookup_table, col)
                 _run(conn, f"ALTER TABLE [{out_table}] ADD [{col}] {col_type} NULL")
 
-        # Build UPDATE ... SET ... FROM ... JOIN
-        set_parts = ", ".join(f"O.[{c}] = L.[{c}]" for c in cfg["columns"])
+        # Build join condition
         join_parts = " AND ".join(
-            f"O.[{hier_upper[out_col.upper()]}] = L.[{lkp_col}]"
-            for out_col, lkp_col in cfg["join_on"].items()
+            f"O.[{hier_upper.get(ok.upper(), ok)}] = L.[{lv}]"
+            for ok, lv in join_on.items()
         )
 
+        # UPDATE output table with lookup columns
+        set_parts = ", ".join(f"O.[{c}] = L.[{c}]" for c in columns)
         _run(conn, f"""
             UPDATE O SET {set_parts}
             FROM [{out_table}] O
-            INNER JOIN [{lookup_table}] L ON {join_parts}
+            INNER JOIN [{lookup_table}] L WITH (NOLOCK) ON {join_parts}
         """)
-        logger.info(f"Post-lookup: joined {cfg['columns']} from {lookup_table} into {out_table}")
+        logger.info(f"Post-lookup: joined {len(columns)} cols from {lookup_table} into {out_table}")
+
+        # Apply filter: DELETE rows that don't match criteria
+        flt = cfg.get("filter")
+        if flt:
+            fcol = flt["column"]
+            fval = flt["value"]
+            before = conn.execute(text(f"SELECT COUNT(*) FROM [{out_table}]")).scalar()
+            _run(conn, f"""
+                DELETE FROM [{out_table}]
+                WHERE ISNULL(CAST([{fcol}] AS NVARCHAR(50)), '') <> :fval
+            """, {"fval": str(fval)})
+            after = conn.execute(text(f"SELECT COUNT(*) FROM [{out_table}]")).scalar()
+            logger.info(f"Post-lookup filter: [{fcol}]={fval} → kept {after}/{before} rows")
 
 
 def _build_and_run_grid(engine, grid: dict) -> dict:

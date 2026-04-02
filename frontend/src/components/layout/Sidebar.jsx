@@ -11,44 +11,44 @@ import { useState, useRef, useEffect } from 'react'
 
 const navItems = [
   { label: 'Dashboard', path: '/', icon: LayoutDashboard, end: true },
-  { label: 'Allocations', path: '/allocations', icon: PackageCheck },
+  { label: 'Allocations', path: '/allocations', icon: PackageCheck, permission: 'ALLOC_READ' },
 ]
 
 // Data Management submenu
 const dataManagementItems = [
-  { label: 'All Tables', path: '/tables', icon: Table2 },
+  { label: 'All Tables', path: '/tables', icon: Table2, permission: 'DATA_VIEW' },
   { label: 'Create Table', path: '/tables/create', icon: FilePlus, permission: 'TABLE_CREATE' },
-  { label: 'Upload Data', path: '/upload', icon: FileUp },
-  { label: 'Export Data', path: '/export', icon: FileDown },
-  { label: 'Jobs Dashboard', path: '/jobs', icon: Activity },
-  { label: 'Data Editor', path: '/editor', icon: Edit3 },
+  { label: 'Upload Data', path: '/upload', icon: FileUp, permission: 'DATA_UPLOAD' },
+  { label: 'Export Data', path: '/export', icon: FileDown, permission: 'DATA_EXPORT' },
+  { label: 'Jobs Dashboard', path: '/jobs', icon: Activity, permission: 'JOBS_VIEW' },
+  { label: 'Data Editor', path: '/editor', icon: Edit3, permission: 'DATA_EDITOR' },
 ]
 
 // Data Preparation submenu
 const dataPreparationItems = [
-  { label: 'MSA Stock Calculation', path: '/msa', icon: BarChart3 },
-  { label: 'BDC Creation', path: '/bdc', icon: FileText },
-  { label: 'Grid Builder', path: '/data-prep/store-stock', icon: LayoutGrid },
-  { label: 'Lookup Art Master', path: '/data-prep/lookup-art-master', icon: Search },
+  { label: 'MSA Stock Calculation', path: '/msa', icon: BarChart3, permission: 'MSA_VIEW' },
+  { label: 'BDC Creation', path: '/bdc', icon: FileText, permission: 'BDC_VIEW' },
+  { label: 'Grid Builder', path: '/data-prep/store-stock', icon: LayoutGrid, permission: 'GRID_VIEW' },
+  { label: 'Lookup Art Master', path: '/data-prep/lookup-art-master', icon: Search, permission: 'LOOKUP_VIEW' },
 ]
 
 // Contribution Percentage submenu
 const contributionItems = [
-  { label: 'Presets', path: '/contribution/presets', icon: Settings },
-  { label: 'Mappings', path: '/contribution/mappings', icon: Columns },
-  { label: 'Execute', path: '/contribution/execute', icon: Cpu },
-  { label: 'Review', path: '/contribution/review', icon: ClipboardCheck },
+  { label: 'Presets', path: '/contribution/presets', icon: Settings, permission: 'CONTRIB_PRESETS' },
+  { label: 'Mappings', path: '/contribution/mappings', icon: Columns, permission: 'CONTRIB_MAPPINGS' },
+  { label: 'Execute', path: '/contribution/execute', icon: Cpu, permission: 'CONTRIB_EXECUTE' },
+  { label: 'Review', path: '/contribution/review', icon: ClipboardCheck, permission: 'CONTRIB_REVIEW' },
 ]
 
 // Reports submenu
 const reportsItems = [
-  { label: 'Pending Allocation', path: '/reports/pend-alc', icon: ClipboardCheck },
+  { label: 'Pending Allocation', path: '/reports/pend-alc', icon: ClipboardCheck, permission: 'REPORTS_PEND_ALC' },
 ]
 
 // Data Validation submenu
 const dataValidationItems = [
-  { label: 'Store Sloc Validation', path: '/data-validation/store-sloc', icon: ShieldCheck },
-  { label: 'Data Checklist', path: '/data-validation/checklist', icon: ClipboardCheck },
+  { label: 'Store Sloc Validation', path: '/data-validation/store-sloc', icon: ShieldCheck, permission: 'STORE_SLOC_VIEW' },
+  { label: 'Data Checklist', path: '/data-validation/checklist', icon: ClipboardCheck, permission: 'CHECKLIST_VIEW' },
 ]
 
 // Settings submenu (admin features)
@@ -237,9 +237,9 @@ export default function Sidebar({ collapsed, onToggle }) {
           title="Trends"
           icon={TrendingUp}
           items={[
-            { label: 'Dashboard', path: '/trends/dashboard', icon: BarChart3 },
-            { label: 'Upload', path: '/trends/upload', icon: FileUp },
-            { label: 'Review', path: '/trends/review', icon: Eye },
+            { label: 'Dashboard', path: '/trends/dashboard', icon: BarChart3, permission: 'TRENDS_DASHBOARD' },
+            { label: 'Upload', path: '/trends/upload', icon: FileUp, permission: 'TRENDS_UPLOAD' },
+            { label: 'Review', path: '/trends/review', icon: Eye, permission: 'TRENDS_REVIEW' },
           ]}
           collapsed={collapsed}
           hasPermission={hasPermission}

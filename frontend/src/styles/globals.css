@@ -110,6 +110,61 @@
 .ag-compact { --ag-header-height: 26px; --ag-row-height: 22px; }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   GLOBAL OVERRIDES — Force consistent sizing on ALL pages
+   These override inline styles that individual pages may set.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Page titles: max 13px */
+main h1, main [class*="page-title"] { font-size: 13px !important; font-weight: 700 !important; line-height: 1.3 !important; }
+main h2 { font-size: 12px !important; font-weight: 600 !important; }
+main h3 { font-size: 11px !important; font-weight: 600 !important; }
+
+/* Subtitles and descriptions */
+main p, main [class*="subtitle"] { font-size: 10px !important; }
+
+/* All body text in main content */
+main { font-size: 11px; }
+main td, main li { font-size: 11px !important; }
+main th { font-size: 9px !important; font-weight: 700 !important; text-transform: uppercase !important; letter-spacing: 0.04em !important; }
+
+/* Inputs, selects, textareas */
+main input, main select, main textarea { font-size: 10px !important; }
+main input[type="text"], main input[type="email"], main input[type="password"],
+main input[type="search"], main input[type="date"], main input[type="number"] {
+  padding: 3px 6px !important; border-radius: 4px !important;
+}
+main select { padding: 3px 6px !important; border-radius: 4px !important; }
+
+/* Buttons — compact */
+main button { font-size: 10px !important; }
+main button[class*="btn"] { font-size: 10px !important; padding: 3px 8px !important; border-radius: 5px !important; }
+
+/* Code/monospace blocks */
+main code { font-size: 9px !important; padding: 1px 4px !important; border-radius: 3px !important; }
+
+/* Stat numbers */
+main [style*="fontSize:18"], main [style*="fontSize:20"], main [style*="fontSize:22"],
+main [style*="fontSize:24"], main [style*="font-size:18"], main [style*="font-size: 18"] {
+  font-size: 14px !important;
+}
+
+/* Card padding: tighter */
+main [style*="padding:14px"], main [style*="padding: 14px"],
+main [style*="padding:16px"], main [style*="padding: 16px"] {
+  padding: 8px 10px !important;
+}
+
+/* Badges — smaller */
+main [style*="borderRadius:20"], main [style*="border-radius:20px"],
+main [style*="borderRadius:99"], main [style*="border-radius: 20"] {
+  font-size: 9px !important; padding: 1px 6px !important;
+}
+
+/* Table row spacing */
+main tr td { padding-top: 3px !important; padding-bottom: 3px !important; }
+main tr th { padding-top: 4px !important; padding-bottom: 4px !important; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
    Scrollbar – Slim & Subtle
    ═══════════════════════════════════════════════════════════════════════════ */
 ::-webkit-scrollbar { width: 5px; height: 5px; }

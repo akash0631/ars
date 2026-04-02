@@ -84,6 +84,7 @@ from typing import Optional
 class ProfileUpdate(BaseModel):
     full_name: Optional[str] = None
     email: Optional[str] = None
+    mobile_no: Optional[str] = None
 
 
 @router.put("/profile", response_model=APIResponse)
@@ -92,11 +93,19 @@ async def update_profile(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Update current user's profile (full_name, email only)."""
+    """Update current user's profile."""
+    if body.email is not None and body.email != current_user.email:
+        dup = db.query(User).filter(User.email == body.email, User.id != current_user.id).first()
+        if dup:
+            raise HTTPException(400, detail=f"Email '{body.email}' is already used by another user")
+        current_user.email = body.email
+    if body.mobile_no is not None and body.mobile_no != current_user.mobile_no:
+        dup = db.query(User).filter(User.mobile_no == body.mobile_no, User.id != current_user.id).first()
+        if dup:
+            raise HTTPException(400, detail=f"Mobile '{body.mobile_no}' is already used by another user")
+        current_user.mobile_no = body.mobile_no
     if body.full_name is not None:
         current_user.full_name = body.full_name
-    if body.email is not None:
-        current_user.email = body.email
     db.commit()
     db.refresh(current_user)
     return APIResponse(message="Profile updated successfully")

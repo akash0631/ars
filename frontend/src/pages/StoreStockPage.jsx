@@ -196,15 +196,15 @@ export default function StoreStockPage() {
     <div style={{ color: C.text, fontFamily:'inherit' }}>
 
       {/* ── Page title ── */}
-      <div style={{ marginBottom:12 }}>
+      <div style={{ marginBottom:8 }}>
         <h1 style={{
-          fontSize:14, fontWeight:700,
+          fontSize:13, fontWeight:700,
           color: C.text, margin:0, display:'flex', alignItems:'center', gap:6,
         }}>
           <Database size={15} color={C.primary} />
           Store Sloc Validation
         </h1>
-        <p style={{ fontSize:11, color: C.textSub, marginTop:2, margin:'2px 0 0' }}>
+        <p style={{ fontSize:9, color: C.textSub, marginTop:2, margin:'2px 0 0' }}>
           Configure <strong style={{color:C.text}}>KPI</strong> labels and{' '}
           <strong style={{color:C.text}}>Active / Inactive</strong> status per SLOC.
           &nbsp;Table:&nbsp;
@@ -226,10 +226,10 @@ export default function StoreStockPage() {
         return (
           <div style={{
             display:'flex', alignItems:'center', gap:10,
-            padding:'8px 14px', marginBottom:12, borderRadius:8,
+            padding:'5px 10px', marginBottom:8, borderRadius:6,
             background: isOk ? C.greenBg : C.redBg,
             border: `1px solid ${isOk ? C.greenBd : C.redBd}`,
-            fontSize:12, color: isOk ? C.green : C.red,
+            fontSize:10, color: isOk ? C.green : C.red,
           }}>
             {isOk
               ? <CheckCircle2 size={14} style={{flexShrink:0}}/>
@@ -246,9 +246,9 @@ export default function StoreStockPage() {
       {!loading && !dataDate && rows.length > 0 && (
         <div style={{
           display:'flex', alignItems:'center', gap:10,
-          padding:'8px 14px', marginBottom:12, borderRadius:8,
+          padding:'5px 10px', marginBottom:8, borderRadius:6,
           background: C.amberBg, border: `1px solid ${C.amberBd}`,
-          fontSize:12, color: C.amber,
+          fontSize:10, color: C.amber,
         }}>
           <AlertTriangle size={14} style={{flexShrink:0}}/>
           <span><strong>ET_STORE_STOCK</strong> — No date column found. Cannot determine data freshness.</span>
@@ -258,17 +258,17 @@ export default function StoreStockPage() {
       {/* ── Card wrapper ── */}
       <div style={{
         background: C.cardBg, border:`1px solid ${C.cardBorder}`,
-        borderRadius:12, overflow:'hidden',
+        borderRadius:8, overflow:'hidden',
         boxShadow:'0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.06)',
       }}>
 
         {/* Card header */}
         <div style={{
           display:'flex', justifyContent:'space-between', alignItems:'center',
-          flexWrap:'wrap', gap:8, padding:'8px 12px',
+          flexWrap:'wrap', gap:6, padding:'5px 10px',
           background: C.headerBg, borderBottom:`1px solid ${C.cardBorder}`,
         }}>
-          <span style={{ fontSize:11, fontWeight:600, color: C.textSub }}>
+          <span style={{ fontSize:10, fontWeight:600, color: C.textSub }}>
             {rows.length} distinct SLOC values from{' '}
             <code style={{ fontSize:10, color: C.primary,
               background: C.primaryLight, padding:'1px 4px', borderRadius:3 }}>
@@ -332,10 +332,10 @@ export default function StoreStockPage() {
             { label:'Unsaved Edits', value:dirtyCount,    color:C.indigo, bg:C.indigoBg },
           ].map((s,i) => (
             <div key={s.label} style={{
-              padding:'8px 12px', background:s.bg,
+              padding:'5px 10px', background:s.bg,
               borderRight: i<4 ? `1px solid ${C.cardBorder}` : 'none',
             }}>
-              <div style={{ fontSize:18, fontWeight:800, color:s.color, lineHeight:1 }}>{s.value}</div>
+              <div style={{ fontSize:14, fontWeight:800, color:s.color, lineHeight:1 }}>{s.value}</div>
               <div style={{ fontSize:9, color:C.textSub, marginTop:2, fontWeight:500 }}>{s.label}</div>
             </div>
           ))}
@@ -344,7 +344,7 @@ export default function StoreStockPage() {
         {/* Search + filter */}
         <div style={{
           display:'flex', gap:8, flexWrap:'wrap', alignItems:'center',
-          padding:'6px 12px', borderBottom:`1px solid ${C.cardBorder}`,
+          padding:'4px 10px', borderBottom:`1px solid ${C.cardBorder}`,
           background: C.headerBg,
         }}>
           <div style={{ position:'relative', flex:1, minWidth:180 }}>
@@ -356,10 +356,10 @@ export default function StoreStockPage() {
               type="text" value={search} placeholder="Search SLOC or KPI…"
               onChange={e => setSearch(e.target.value)}
               style={{
-                width:'100%', padding:'5px 8px 5px 26px', borderRadius:6,
+                width:'100%', padding:'4px 6px 4px 24px', borderRadius:4,
                 background: C.inputBg, border:`1px solid ${C.inputBorder}`,
                 color: C.text,
-                fontSize:11, outline:'none', boxSizing:'border-box',
+                fontSize:10, outline:'none', boxSizing:'border-box',
               }}
             />
           </div>
@@ -375,7 +375,7 @@ export default function StoreStockPage() {
               { key:'new',      label:newCount>0 ? `New (${newCount})` : 'New' },
             ].map(f => (
               <button key={f.key} onClick={() => setFilterTab(f.key)} style={{
-                padding:'3px 9px', borderRadius:4, fontSize:10, fontWeight:600,
+                padding:'2px 8px', borderRadius:3, fontSize:9, fontWeight:600,
                 border:'none', cursor:'pointer', transition:'all .15s',
                 background: filterTab===f.key ? C.primary      : 'transparent',
                 color:      filterTab===f.key ? '#fff'          : C.textSub,
@@ -461,7 +461,7 @@ export default function StoreStockPage() {
                     <td style={{ padding:'4px 10px' }}>
                       <div style={{ display:'flex', alignItems:'center', gap:5 }}>
                         <code style={{
-                          fontFamily:'Consolas,monospace', fontSize:11, fontWeight:700,
+                          fontFamily:'Consolas,monospace', fontSize:10, fontWeight:700,
                           color: C.codeColor,
                           letterSpacing:'.04em',
                         }}>
@@ -485,7 +485,7 @@ export default function StoreStockPage() {
                         onChange={e => setField(row.sloc,'kpi',e.target.value)}
                         placeholder="Enter KPI label…"
                         style={{
-                          width:'100%', padding:'4px 8px', borderRadius:5, fontSize:11,
+                          width:'100%', padding:'3px 6px', borderRadius:4, fontSize:10,
                           background: isDirty && dirty[row.sloc]?.kpi!==undefined
                             ? C.indigoBg : C.inputBg,
                           border: `1px solid ${

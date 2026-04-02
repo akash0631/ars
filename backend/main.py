@@ -1,6 +1,6 @@
 """
-Retail Listing & Allocation System - FastAPI Application
-=========================================================
+ARS - Auto Replenishment System - FastAPI Application
+======================================================
 Enterprise-grade backend for multi-store retail management.
 """
 import os
@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
 from app.core.config import get_settings
-from app.database.session import check_db_connection, check_data_db_connection, SessionLocal, enable_rcsi
+from app.database.session import check_db_connection, check_data_db_connection, SessionLocal, enable_rcsi, Base, system_engine
 from app.api.v1.router import api_router
 from app.middleware.exception_handler import global_exception_handler, request_logging_middleware
 
@@ -51,16 +51,27 @@ async def lifespan(app: FastAPI):
     # Enable RCSI so readers never block during uploads
     enable_rcsi()
 
-    # Create super admin if needed
+    # Ensure all model tables exist (auto-create new ones)
     try:
-        from app.services.auth_service import create_super_admin_if_needed
+        import app.models.rbac  # noqa - register models with Base
+        import app.models.rls   # noqa
+        import app.models.audit # noqa
+        Base.metadata.create_all(bind=system_engine, checkfirst=True)
+        logger.info("System DB tables verified")
+    except Exception as e:
+        logger.warning(f"Table auto-create: {e}")
+
+    # Create super admin + seed permissions if needed
+    try:
+        from app.services.auth_service import create_super_admin_if_needed, seed_permissions_if_needed
         db = SessionLocal()
         try:
             create_super_admin_if_needed(db)
+            seed_permissions_if_needed(db)
         finally:
             db.close()
     except Exception as e:
-        logger.warning(f"Super admin bootstrap skipped: {e}")
+        logger.warning(f"Bootstrap skipped: {e}")
 
     # Clean up any hanging jobs from previous runs
     try:
@@ -115,7 +126,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
-    description="Enterprise Retail Listing & Allocation Management System",
+    description="ARS - Auto Replenishment System",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan,

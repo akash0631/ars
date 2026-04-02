@@ -231,8 +231,7 @@ function ProfileModal({ user, onClose }) {
           </div>
           <div>
             <label className="label">Mobile No</label>
-            <input value={form.mobile_no} onChange={e => setForm({ ...form, mobile_no: e.target.value })} className="input" disabled />
-            <p className="text-xs text-gray-400 mt-1">Contact admin to change mobile number</p>
+            <input value={form.mobile_no} onChange={e => setForm({ ...form, mobile_no: e.target.value })} className="input" />
           </div>
           <div className="flex justify-end gap-3 pt-2">
             <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>

@@ -169,6 +169,7 @@ class ColumnRestrictionCreate(BaseModel):
     is_visible: bool = True
     is_masked: bool = False
     mask_pattern: Optional[str] = None
+    can_edit: bool = True
 
 
 # Resolve forward reference

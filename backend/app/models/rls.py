@@ -72,8 +72,7 @@ class ColumnRestriction(Base):
     is_visible = Column(Boolean, default=True)
     is_masked = Column(Boolean, default=False)
     mask_pattern = Column(String(100))
-    # Note: can_edit column is handled via raw SQL for backward compatibility
-    # Run migration 004 to add can_edit column to database
+    can_edit = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (
@@ -81,6 +80,27 @@ class ColumnRestriction(Base):
     )
 
     role = relationship("Role", back_populates="column_restrictions")
+
+
+class TableRoleAccess(Base):
+    """Per-table access control: which roles can read/write which tables."""
+    __tablename__ = "rls_table_role_access"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    table_name = Column(String(200), nullable=False, index=True)
+    role_id = Column(Integer, ForeignKey("rbac_roles.id"), nullable=False)
+    can_read = Column(Boolean, default=True)
+    can_write = Column(Boolean, default=False)
+    can_upload = Column(Boolean, default=False)
+    can_export = Column(Boolean, default=False)
+    granted_at = Column(DateTime, default=datetime.utcnow)
+    granted_by = Column(String(100))
+
+    __table_args__ = (
+        UniqueConstraint("table_name", "role_id", name="uq_table_role_access"),
+    )
+
+    role = relationship("Role")
 
 
 class TableSettings(Base):

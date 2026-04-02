@@ -10,7 +10,7 @@ import json
 
 class Settings(BaseSettings):
     # Application
-    APP_NAME: str = "RetailAllocationSystem"
+    APP_NAME: str = "ARS - Auto Replenishment System"
     APP_VERSION: str = "1.0.0"
     APP_ENV: str = "development"
     DEBUG: bool = False
