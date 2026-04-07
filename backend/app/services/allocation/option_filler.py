@@ -184,13 +184,11 @@ class GlobalGreedyFiller:
             return store_mbq.get(st_cd, 0) / max(store_total_opts.get(st_cd, 1), 1)
 
         # ================================================================
-        # PHASE 1: Tag store articles to slots (L or MIX)
+        # PHASE 1: Fill slots from STORE INVENTORY ONLY (no DC yet)
         # ================================================================
-        # For each store, look at articles from FACT_STOCK_GENCOLOR.
-        # - If article also in MSA (DC has stock) -> status = "L"
-        # - If article NOT in MSA (DC empty) -> status = "MIX" (dying)
-        # Fill slots up to total_opt_count per store.
-        # Process stores sorted by fill rate ascending (equitable).
+        # Step A: L articles with pipeline stock >= 90% of MBQ/opt → fill slots
+        # Step B: Remaining MIX articles (< MBQ) merge/bundle into remaining slots
+        # DC stock is NOT used in Phase 1 — that comes in Phase 2+3.
         # ================================================================
 
         phase1_l = 0
@@ -208,37 +206,35 @@ class GlobalGreedyFiller:
             if not arts_in_store:
                 continue
 
-            # PASS 1: Classify store articles WITHOUT DC (pure store inventory)
-            #   L   = store_stock >= MBQ/opt (can display full set)
-            #   MIX = store_stock < MBQ/opt (can't display, needs help)
+            # Classify store articles (NO DC involvement):
+            #   L   = pipeline stock >= 90% of MBQ/opt (can display)
+            #   MIX = pipeline stock < 90% of MBQ/opt (can't display alone)
             mbq_opt = mbq_per_opt(st_cd)
-            art_list = []
+            l_threshold = mbq_opt * 0.9  # 90% of MBQ counts as displayable
+
+            l_articles = []
+            mix_articles = []
             for gac in arts_in_store:
                 info = scored_lookup.get(gac)
                 score = int(info['total_score']) if info else 50
                 st_stock = store_stock_map.get((st_cd, gac), 0)
 
-                if st_stock >= mbq_opt and mbq_opt > 0:
-                    status = 'L'
-                    priority = 2
+                if st_stock >= l_threshold and l_threshold > 0:
+                    l_articles.append((gac, score, st_stock, info))
                 else:
-                    status = 'MIX'  # Will try DC conversion in Phase 2
-                    priority = 1
+                    mix_articles.append((gac, score, st_stock, info))
 
-                art_list.append((gac, status, priority, score, st_stock, info))
-
-            # Sort: L first (can display), then MIX, then by score desc
-            art_list.sort(key=lambda x: (-x[2], -x[3], -x[4]))
+            # Sort L by score desc, MIX by stock desc (biggest contribute first to bundling)
+            l_articles.sort(key=lambda x: (-x[1], -x[2]))
+            mix_articles.sort(key=lambda x: (-x[2], -x[1]))
 
             store_filled_arts.setdefault(st_cd, set())
 
             # Find slot(s) for this store
             store_slot_keys = [k for k, v in slot_map.items() if v.st_cd == st_cd]
 
-            # First pass: assign L articles (1 per slot)
-            for gac, art_status_p1, priority, score, st_stock, info in art_list:
-                if art_status_p1 != 'L':
-                    continue
+            # Step A: Assign L articles (1 per slot, >= 90% MBQ)
+            for gac, score, st_stock, info in l_articles:
                 art_seg = info.get('seg', '') if info else ''
                 target_slots = None
                 for sk in store_slot_keys:
@@ -275,28 +271,21 @@ class GlobalGreedyFiller:
                 store_art_colors[color_key] = store_art_colors.get(color_key, 0) + 1
                 phase1_l += 1
 
-            # Second pass: bundle MIX articles into REMAINING slots only
-            # MIX can only fill slots that L didn't take
-            # Multiple MIX articles share one slot — new slot when cumulative qty >= MBQ/opt
-            remaining_slots_for_mix = sum(
-                1 for sk in store_slot_keys if not slot_map[sk].is_full
-            )
-            if remaining_slots_for_mix > 0 and mbq_opt > 0:
-                mix_articles_for_store = [
-                    (gac, st_stock, info, score)
-                    for gac, art_status_p1, priority, score, st_stock, info in art_list
-                    if art_status_p1 == 'MIX' and gac not in store_filled_arts.get(st_cd, set())
-                ]
-
+            # Step B: Bundle MIX articles into REMAINING slots
+            remaining_slots_count = sum(1 for sk in store_slot_keys if not slot_map[sk].is_full)
+            if remaining_slots_count > 0 and mbq_opt > 0:
                 mix_cumulative_qty = 0
                 mix_slots_used = 0
                 current_mix_slot = None
 
-                for gac, st_stock, info, score in mix_articles_for_store:
+                for gac, score, st_stock, info in mix_articles:
+                    if gac in store_filled_arts.get(st_cd, set()):
+                        continue
+
+                    # Start new slot when cumulative reaches MBQ or first article
                     if current_mix_slot is None or mix_cumulative_qty >= mbq_opt:
-                        # Need a new MIX slot
-                        if mix_slots_used >= remaining_slots_for_mix:
-                            break  # Can't use more slots than available
+                        if mix_slots_used >= remaining_slots_count:
+                            break  # No more slots for MIX
                         current_mix_slot = None
                         for sk in store_slot_keys:
                             if not slot_map[sk].is_full:
