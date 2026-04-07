@@ -17,15 +17,45 @@ elif [ -d /home/site/wwwroot ]; then
   cd /home/site/wwwroot
 fi
 echo "Working directory: $(pwd)"
+echo "Files in working directory:"
+ls -la
 
-# 3. Install Python dependencies
+# 3. Install Python dependencies (split so pyodbc failure doesn't block everything)
 echo "Installing Python dependencies..."
-pip install --no-cache-dir -r requirements.txt 2>&1 | tail -5 || echo "pip install had warnings"
+
+# Install pyodbc separately — it may fail if ODBC headers are missing, and that's OK
+pip install --no-cache-dir pyodbc==5.1.0 2>&1 | tail -3 || echo "WARNING: pyodbc install failed — SQL Server features disabled, Snowflake-only mode"
+
+# Install everything else (skip pyodbc since we already tried it)
+pip install --no-cache-dir -r requirements.txt 2>&1 | tail -10 || echo "WARNING: pip install had errors"
 
 # 4. Ensure directories exist
 mkdir -p logs uploads exports
 
-# 5. Start Gunicorn (2 workers for B2 tier, 300s timeout)
+# 5. Verify key imports before starting
+echo "Verifying Python imports..."
+python3 -c "
+import sys
+try:
+    import fastapi; print(f'fastapi OK: {fastapi.__version__}')
+except ImportError as e:
+    print(f'FATAL: fastapi not installed: {e}'); sys.exit(1)
+try:
+    import uvicorn; print('uvicorn OK')
+except ImportError as e:
+    print(f'FATAL: uvicorn not installed: {e}'); sys.exit(1)
+try:
+    import pyodbc; print('pyodbc OK')
+except ImportError:
+    print('WARNING: pyodbc not available — SQL Server disabled')
+try:
+    import snowflake.connector; print('snowflake OK')
+except ImportError:
+    print('WARNING: snowflake-connector not available')
+print('Import check passed')
+" || { echo "FATAL: Basic imports failed"; exit 1; }
+
+# 6. Start Gunicorn (2 workers for B2 tier, 300s timeout)
 echo "Starting ARS backend..."
 exec gunicorn main:app \
   -w 2 \

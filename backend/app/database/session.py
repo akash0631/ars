@@ -3,16 +3,33 @@ Database Engine & Session Management for SQL Server
 Dual Database Setup:
 - System DB (Claude): RBAC, RLS, Audit, Table Metadata
 - Data DB (Rep_data): Business data, dynamic tables, allocations
+
+NOTE: pyodbc / ODBC Driver 18 may not be available on Azure App Service Linux.
+This module MUST NOT crash on import — the app should start in degraded mode
+so that Snowflake-only endpoints (allocation) still work.
 """
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import sessionmaker, Session, DeclarativeBase
 from sqlalchemy.pool import QueuePool
-from typing import Generator
+from typing import Generator, Optional
 from loguru import logger
 
 from app.core.config import get_settings
 
 settings = get_settings()
+
+# ============================================================================
+# Check if pyodbc / ODBC driver is available
+# ============================================================================
+_odbc_available = False
+try:
+    import pyodbc
+    _odbc_available = True
+    logger.info("pyodbc loaded successfully")
+except ImportError:
+    logger.warning("pyodbc not installed — SQL Server engines disabled (Snowflake-only mode)")
+except Exception as e:
+    logger.warning(f"pyodbc import failed: {e} — SQL Server engines disabled (Snowflake-only mode)")
 
 # ============================================================================
 # Lazy Engine Creation — prevents Azure cold-start crash if DB unreachable
@@ -21,8 +38,11 @@ _system_engine = None
 _data_engine = None
 
 
-def _create_engine_safe(url, label="DB"):
+def _create_engine_safe(url, label="DB") -> Optional[object]:
     """Create SQLAlchemy engine with error handling for cold start."""
+    if not _odbc_available:
+        logger.warning(f"{label} engine skipped — ODBC driver not available")
+        return None
     try:
         eng = create_engine(
             url,
@@ -33,28 +53,13 @@ def _create_engine_safe(url, label="DB"):
             pool_recycle=settings.DB_POOL_RECYCLE,
             pool_pre_ping=getattr(settings, 'DB_POOL_PRE_PING', True),
             echo=settings.DEBUG,
+            connect_args={"timeout": 10},  # 10s login timeout to avoid hanging
         )
         logger.info(f"{label} engine created: {url[:50]}...")
         return eng
     except Exception as e:
         logger.error(f"{label} engine creation failed: {e}")
         return None
-
-
-@property
-def _lazy_system_engine():
-    global _system_engine
-    if _system_engine is None:
-        _system_engine = _create_engine_safe(settings.DATABASE_URL, "System")
-    return _system_engine
-
-
-@property
-def _lazy_data_engine():
-    global _data_engine
-    if _data_engine is None:
-        _data_engine = _create_engine_safe(settings.DATA_DATABASE_URL, "Data")
-    return _data_engine
 
 
 def _get_system_engine():

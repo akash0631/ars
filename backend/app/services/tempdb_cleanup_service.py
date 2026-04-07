@@ -166,6 +166,23 @@ class TempDBCleanupService:
         mb_after:  Optional[float] = None
 
         engine = get_data_engine()
+        if engine is None:
+            logger.warning("TempDB cleanup skipped — Data DB engine not available")
+            stats: Dict[str, Any] = {
+                "run_at": datetime.utcnow().isoformat(),
+                "dry_run": dry_run,
+                "dropped_count": 0,
+                "dropped": [],
+                "skipped": [],
+                "shrunk_files": [],
+                "errors": [{"error": "Data DB engine not available"}],
+                "tempdb_mb_before": None,
+                "tempdb_mb_after": None,
+                "mb_freed": 0,
+            }
+            self._last_run = datetime.utcnow()
+            self._last_stats = stats
+            return stats
         raw_conn = engine.raw_connection()
         try:
             cursor = raw_conn.cursor()

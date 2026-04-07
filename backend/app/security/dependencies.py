@@ -57,7 +57,8 @@ async def get_current_user(
             if attempt > 0:
                 # On retry, use a fresh session since the original db session is dead
                 db.close()
-                system_engine.dispose()
+                if system_engine is not None:
+                    system_engine.dispose()
                 time.sleep(1)
                 db = SystemSessionLocal()
             user = db.query(User).filter(User.username == username, User.is_active == True).first()
