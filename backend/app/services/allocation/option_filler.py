@@ -526,18 +526,17 @@ class GlobalGreedyFiller:
                     f"{skipped_min_score} min-score")
 
         # ================================================================
-        # PHASE 4: Push ALL remaining MSA stock to stores
+        # PHASE 4: Push remaining MSA stock — ARTICLE-CENTRIC
         # ================================================================
-        # Every MSA article must be distributed. If an article wasn't in
-        # a store's top-200 scored list, push it to stores with empty
-        # slots anyway (sorted by fill rate ascending).
-        # Also push remaining stock of partially-allocated articles.
+        # For each MSA article with remaining DC stock:
+        #   Find stores that need it (have empty slots), sorted by SCORE desc
+        #   Allocate to highest-scoring store first, then next, until DC depleted
+        #   Balance MSA decreases after each allocation
         # ================================================================
 
         phase4_pushed = 0
         phase4_qty = 0
 
-        # Get all MSA articles with remaining DC stock
         remaining_msa = [
             (gac, dc_stock_tracker.get(gac, 0))
             for gac in msa_articles
@@ -546,47 +545,56 @@ class GlobalGreedyFiller:
         remaining_msa.sort(key=lambda x: -x[1])  # Largest stock first
 
         if remaining_msa:
-            # Get open store-segments
-            open_stores = [
-                (key, ss) for key, ss in slot_map.items() if not ss.is_full
-            ]
-            open_stores.sort(key=lambda x: (x[1].fill_rate, x[1].seg))
+            # Build article→store score lookup from scored_pairs
+            # For each article, which stores scored it and at what score?
+            art_store_scores: Dict[str, List[Tuple[str, int]]] = {}
+            for _, row in scored_pairs.iterrows():
+                gac = row['gen_art_color']
+                if gac in msa_articles and dc_stock_tracker.get(gac, 0) > 0:
+                    st = row['st_cd']
+                    score = int(row.get('total_score', 0))
+                    art_store_scores.setdefault(gac, []).append((st, score))
+
+            # Sort each article's stores by score DESC (highest need first)
+            for gac in art_store_scores:
+                art_store_scores[gac].sort(key=lambda x: -x[1])
 
             for gac, dc_qty in remaining_msa:
-                if dc_qty <= 0:
+                if dc_stock_tracker.get(gac, 0) <= 0:
                     continue
-                # Get article info from scored_lookup
+
                 art_info = scored_lookup.get(gac, {})
                 gac_str = str(gac)
                 gen_art = art_info.get('gen_art', gac_str.split('_')[0] if '_' in gac_str else gac_str)
                 color = art_info.get('color', '')
-                score = int(art_info.get('total_score', 0))
                 mrp = float(art_info.get('mrp', 0) or 0)
 
-                # Push to stores with empty slots, equitably
-                for slot_key, slots in open_stores:
-                    if slots.is_full or dc_stock_tracker.get(gac, 0) <= 0:
-                        continue
-                    st_cd = slots.st_cd
-                    store_filled_arts.setdefault(st_cd, set())
+                # For this article, go through stores by score (highest first)
+                store_list = art_store_scores.get(gac, [])
+                for st_cd, score in store_list:
+                    if dc_stock_tracker.get(gac, 0) <= 0:
+                        break  # Article exhausted
 
-                    # Skip if already assigned to this store
+                    # Check store has empty slots
+                    st_slot_keys = [k for k, v in slot_map.items() if v.st_cd == st_cd and not v.is_full]
+                    if not st_slot_keys:
+                        continue
+
+                    store_filled_arts.setdefault(st_cd, set())
                     if gac in store_filled_arts[st_cd]:
                         continue
-                    # Skip if already in store stock
                     if (st_cd, gac) in store_stock_map:
                         continue
 
+                    # Find an open slot
+                    target = slot_map[st_slot_keys[0]]
                     dc_before = dc_stock_tracker.get(gac, 0)
-                    if dc_before <= 0:
-                        break
                     mbq_opt_val = mbq_per_opt(st_cd)
                     actual_disp = min(round(mbq_opt_val), dc_before)
 
-                    opt_no = slots.filled_slots + 1
                     assignments.append({
-                        'st_cd': st_cd, 'majcat': majcat, 'seg': slots.seg,
-                        'opt_no': opt_no, 'gen_art_color': gac,
+                        'st_cd': st_cd, 'majcat': majcat, 'seg': target.seg,
+                        'opt_no': target.filled_slots + 1, 'gen_art_color': gac,
                         'gen_art': gen_art, 'color': color,
                         'total_score': score, 'art_status': 'NEW_L',
                         'is_multi_opt': 0, 'disp_q': actual_disp,
@@ -597,15 +605,10 @@ class GlobalGreedyFiller:
                         'st_stock': 0,
                     })
                     dc_stock_tracker[gac] = max(0, dc_before - actual_disp)
-                    slots.filled_slots += 1
+                    target.filled_slots += 1
                     store_filled_arts[st_cd].add(gac)
                     phase4_pushed += 1
                     phase4_qty += actual_disp
-
-            # Re-sort open stores after phase 4
-            open_stores = [
-                (key, ss) for key, ss in slot_map.items() if not ss.is_full
-            ]
 
         # Final audit
         final_dc_remaining = sum(v for v in dc_stock_tracker.values() if v > 0)
