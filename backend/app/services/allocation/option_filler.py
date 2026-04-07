@@ -475,36 +475,94 @@ class GlobalGreedyFiller:
                     f"{skipped_min_score} min-score")
 
         # ================================================================
-        # PHASE 4: Audit -- check no MSA article is left unallocated
+        # PHASE 4: Push ALL remaining MSA stock to stores
         # ================================================================
-        # Every article in MSA ideally goes to at least one store.
-        # If DC stock remains after all stores filled, log a warning.
+        # Every MSA article must be distributed. If an article wasn't in
+        # a store's top-200 scored list, push it to stores with empty
+        # slots anyway (sorted by fill rate ascending).
+        # Also push remaining stock of partially-allocated articles.
         # ================================================================
 
-        all_allocated_gacs: Set[str] = set()
-        for a in assignments:
-            all_allocated_gacs.add(a['gen_art_color'])
+        phase4_pushed = 0
+        phase4_qty = 0
 
-        unallocated_msa = []
-        remaining_dc_stock = 0
-        for gac in msa_articles:
-            remaining = dc_stock_tracker.get(gac, 0)
-            if remaining > 0 and gac not in all_allocated_gacs:
-                unallocated_msa.append((gac, remaining))
-                remaining_dc_stock += remaining
+        # Get all MSA articles with remaining DC stock
+        remaining_msa = [
+            (gac, dc_stock_tracker.get(gac, 0))
+            for gac in msa_articles
+            if dc_stock_tracker.get(gac, 0) > 0
+        ]
+        remaining_msa.sort(key=lambda x: -x[1])  # Largest stock first
 
-        if unallocated_msa:
-            logger.warning(
-                f"[{majcat}] Phase 4 audit: {len(unallocated_msa)} MSA articles with "
-                f"{remaining_dc_stock:.0f} total DC stock went UNALLOCATED to any store. "
-                f"Top 5: {unallocated_msa[:5]}"
-            )
-        else:
-            total_dc_remaining = sum(
-                v for v in dc_stock_tracker.values() if v > 0
-            )
-            logger.info(f"[{majcat}] Phase 4 audit: All MSA articles allocated. "
-                        f"Remaining DC stock (partially allocated): {total_dc_remaining:.0f}")
+        if remaining_msa:
+            # Get open store-segments
+            open_stores = [
+                (key, ss) for key, ss in slot_map.items() if not ss.is_full
+            ]
+            open_stores.sort(key=lambda x: (x[1].fill_rate, x[1].seg))
+
+            for gac, dc_qty in remaining_msa:
+                if dc_qty <= 0:
+                    continue
+                # Get article info from scored_lookup
+                art_info = scored_lookup.get(gac, {})
+                gac_str = str(gac)
+                gen_art = art_info.get('gen_art', gac_str.split('_')[0] if '_' in gac_str else gac_str)
+                color = art_info.get('color', '')
+                score = int(art_info.get('total_score', 0))
+                mrp = float(art_info.get('mrp', 0) or 0)
+
+                # Push to stores with empty slots, equitably
+                for slot_key, slots in open_stores:
+                    if slots.is_full or dc_stock_tracker.get(gac, 0) <= 0:
+                        continue
+                    st_cd = slots.st_cd
+                    store_filled_arts.setdefault(st_cd, set())
+
+                    # Skip if already assigned to this store
+                    if gac in store_filled_arts[st_cd]:
+                        continue
+                    # Skip if already in store stock
+                    if (st_cd, gac) in store_stock_map:
+                        continue
+
+                    dc_before = dc_stock_tracker.get(gac, 0)
+                    if dc_before <= 0:
+                        break
+                    mbq_opt_val = mbq_per_opt(st_cd)
+                    actual_disp = min(round(mbq_opt_val), dc_before)
+
+                    opt_no = slots.filled_slots + 1
+                    assignments.append({
+                        'st_cd': st_cd, 'majcat': majcat, 'seg': slots.seg,
+                        'opt_no': opt_no, 'gen_art_color': gac,
+                        'gen_art': gen_art, 'color': color,
+                        'total_score': score, 'art_status': 'NEW_L',
+                        'is_multi_opt': 0, 'disp_q': actual_disp,
+                        'mbq': store_mbq.get(st_cd, 0),
+                        'mrp': mrp, 'bgt_sales_per_day': 0,
+                        'dc_stock_before': dc_before,
+                        'dc_stock_after': max(0, dc_before - actual_disp),
+                        'st_stock': 0,
+                    })
+                    dc_stock_tracker[gac] = max(0, dc_before - actual_disp)
+                    slots.filled_slots += 1
+                    store_filled_arts[st_cd].add(gac)
+                    phase4_pushed += 1
+                    phase4_qty += actual_disp
+
+            # Re-sort open stores after phase 4
+            open_stores = [
+                (key, ss) for key, ss in slot_map.items() if not ss.is_full
+            ]
+
+        # Final audit
+        final_dc_remaining = sum(v for v in dc_stock_tracker.values() if v > 0)
+        unallocated_count = sum(1 for gac in msa_articles if dc_stock_tracker.get(gac, 0) > 0
+                                and gac not in {a['gen_art_color'] for a in assignments})
+        logger.info(f"[{majcat}] Phase 4 push: {phase4_pushed} additional articles pushed, "
+                    f"{phase4_qty:.0f} units. DC remaining: {final_dc_remaining:.0f}. "
+                    f"Unallocated MSA articles: {unallocated_count}")
 
         # ================================================================
         # SUMMARY

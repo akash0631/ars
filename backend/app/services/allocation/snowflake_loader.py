@@ -90,13 +90,18 @@ def get_scored_pairs(majcat: str, top_n: int = 200) -> pd.DataFrame:
     cur = conn.cursor()
     t0 = time.time()
     try:
+        # Load ALL scored pairs (no top-N limit) — every MSA article must be allocatable
+        if top_n and top_n < 9999:
+            qualify = f"QUALIFY ROW_NUMBER() OVER (PARTITION BY ST_CD ORDER BY TOTAL_SCORE DESC) <= {top_n}"
+        else:
+            qualify = ""
         cur.execute(f"""
             SELECT ST_CD, GEN_ART_COLOR, GEN_ART, COLOR, SEG, TOTAL_SCORE,
                    DC_STOCK_QTY, MRP, VENDOR_CODE, FABRIC, SEASON,
                    IS_ST_SPECIFIC, PRIORITY_TYPE
             FROM ARTICLE_SCORES
             WHERE MAJCAT = %s
-            QUALIFY ROW_NUMBER() OVER (PARTITION BY ST_CD ORDER BY TOTAL_SCORE DESC) <= {top_n}
+            {qualify}
         """, (majcat,))
         cols = [d[0].lower() for d in cur.description]
         rows = cur.fetchall()
