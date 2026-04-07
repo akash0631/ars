@@ -192,18 +192,28 @@ class GlobalGreedyFiller:
                     art_status = 'L' if is_cont else 'L_ONLY'  # L = continuation, L_ONLY = store only
 
                     dc_before = dc_stock_tracker.get(gac, 0)
+                    # L-ART dispatch: need = MBQ per option - store stock for this article
+                    # MBQ per option = total MBQ / total option slots
+                    mbq_per_opt = store_mbq.get(st_cd, 0) / max(store_total_slots.get(st_cd, 1), 1)
+                    st_stk = art_info['st_stock']
+                    need = max(0, round(mbq_per_opt - st_stk))
+                    if is_cont and dc_before > 0 and need > 0:
+                        actual_disp = min(need, dc_before)
+                        dc_stock_tracker[gac] = max(dc_before - actual_disp, 0)
+                    else:
+                        actual_disp = 0  # L_ONLY or fully stocked: no dispatch needed
                     assignment = {
                         'st_cd': st_cd, 'majcat': majcat, 'seg': seg,
                         'opt_no': opt_no, 'gen_art_color': gac,
                         'gen_art': gen_art, 'color': color,
                         'total_score': score, 'art_status': art_status,
                         'is_multi_opt': 0,
-                        'disp_q': round(store_bgt_disp.get(st_cd, 0) / max(store_total_slots.get(st_cd, 1), 1)),
+                        'disp_q': actual_disp,
                         'mbq': store_mbq.get(st_cd, 0),
                         'mrp': float(score_row.get('mrp', 0) or 0) if score_row is not None else 0,
                         'bgt_sales_per_day': 0,
                         'dc_stock_before': dc_before,
-                        'dc_stock_after': dc_before,  # L-ART doesn't consume DC stock yet
+                        'dc_stock_after': dc_stock_tracker.get(gac, 0),
                         'st_stock': art_info['st_stock'],
                     }
                     assignments.append(assignment)
@@ -345,6 +355,11 @@ class GlobalGreedyFiller:
             else:
                 art_status = 'MIX'
 
+            # MIX dispatch: new article going to store, need = MBQ per option (no store stock)
+            mbq_per_opt = store_mbq.get(st_cd, 0) / max(store_total_slots.get(st_cd, 1), 1)
+            dc_remaining = dc_stock_tracker.get(gac, 0)
+            actual_disp = min(round(mbq_per_opt), max(dc_remaining, 0))
+
             assignment = {
                 'st_cd': st_cd,
                 'majcat': majcat,
@@ -356,13 +371,15 @@ class GlobalGreedyFiller:
                 'total_score': score,
                 'art_status': art_status,
                 'is_multi_opt': 1 if is_multi else 0,
-                'disp_q': round(store_bgt_disp.get(st_cd, 0) / max(store_total_slots.get(st_cd, 1), 1)),
+                'disp_q': actual_disp,
                 'mbq': store_mbq.get(st_cd, 0),
                 'mrp': float(row.get('mrp', 0) or 0),
                 'bgt_sales_per_day': 0,
                 'dc_stock_before': dc_before,
-                'dc_stock_after': dc_stock_tracker.get(gac, 0),
+                'dc_stock_after': max(dc_remaining - actual_disp, 0),
             }
+            # Deduct dispatched qty from DC stock tracker
+            dc_stock_tracker[gac] = max(dc_remaining - actual_disp, 0)
             assignments.append(assignment)
 
             # Update tracking
