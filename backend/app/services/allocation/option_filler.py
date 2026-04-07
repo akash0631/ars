@@ -226,12 +226,21 @@ class GlobalGreedyFiller:
             store_slot_keys = [k for k, v in slot_map.items() if v.st_cd == st_cd]
 
             for gac, has_dc, score, st_stock, info in art_list:
-                # Find a slot that isn't full
+                # Find a matching slot: prefer same segment, fallback to any
+                art_seg = info.get('seg', '') if info else ''
                 target_slots = None
+                # First try: match article segment to slot segment
                 for sk in store_slot_keys:
-                    if not slot_map[sk].is_full:
-                        target_slots = slot_map[sk]
+                    s = slot_map[sk]
+                    if not s.is_full and art_seg and s.seg == art_seg:
+                        target_slots = s
                         break
+                # Fallback: any non-full slot
+                if target_slots is None:
+                    for sk in store_slot_keys:
+                        if not slot_map[sk].is_full:
+                            target_slots = slot_map[sk]
+                            break
                 if target_slots is None:
                     break  # All slots for this store are full
 
@@ -565,19 +574,28 @@ class GlobalGreedyFiller:
                     f"Unallocated MSA articles: {unallocated_count}")
 
         # ================================================================
-        # SUMMARY
+        # SUMMARY — correct fill rate excludes MIX (not displayable)
         # ================================================================
 
-        filled_slots = sum(s.filled_slots for s in slot_map.values())
-        empty_slots = total_slots - filled_slots
         total_disp = sum(a['disp_q'] for a in assignments)
+        l_count = sum(1 for a in assignments if a['art_status'] == 'L')
+        mix_count = sum(1 for a in assignments if a['art_status'] == 'MIX')
+        newl_count = sum(1 for a in assignments if a['art_status'] == 'NEW_L')
+        total_newl = newl_count + phase4_pushed
+
+        # Fill rate: L + MIX + NEW_L all count (MIX articles bundled into display slots)
+        filled = l_count + mix_count + total_newl
+        empty_slots = max(0, total_slots - filled)
+        fill_before = (l_count + mix_count) / max(total_slots, 1) * 100  # Before DC allocation
+        fill_after = filled / max(total_slots, 1) * 100  # After DC allocation
 
         logger.info(
             f"[{majcat}] ALLOCATION COMPLETE: "
-            f"L={phase1_l} + MIX={phase1_mix} + Continuation={phase2_dispatched} + "
-            f"New_L={phase3_filled} | "
-            f"{filled_slots}/{total_slots} slots filled ({empty_slots} empty) | "
-            f"Total dispatch: {total_disp:.0f} units"
+            f"L={l_count} MIX={mix_count} NEW_L={total_newl} | "
+            f"Fill BEFORE (L+MIX): {fill_before:.1f}% | "
+            f"Fill AFTER (L+MIX+NEW_L): {fill_after:.1f}% | "
+            f"Empty: {empty_slots} | "
+            f"Dispatch: {total_disp:.0f} units"
         )
 
         if not assignments:
