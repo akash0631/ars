@@ -187,37 +187,84 @@ def get_budget_cascade(majcat: str) -> pd.DataFrame:
         conn.close()
 
 
-def get_dc_variant_stock(gen_art_colors: List[str], majcat: str = "") -> pd.DataFrame:
+def get_dc_variant_stock(gen_art_colors: List[str], majcat: str = "", rdc_code: str = "DH24") -> pd.DataFrame:
     """
-    Get DC variant-level stock from MSA_ARTICLES for size allocation.
+    Get DC variant-level (size) stock from MSA_ARTICLES for a specific warehouse.
+
+    MSA_ARTICLES has stock per DC as separate columns:
+      V04 = DH24 (Delhi Hub), V01 = DW01 (West), etc.
+
+    Args:
+        gen_art_colors: list of GEN_ART_NUMBER + '_' + CLR keys to filter
+        majcat: for logging
+        rdc_code: 'DH24' uses V04 column, 'DW01' uses V01 column
 
     Columns returned (lowercase):
-      gen_art_color, sloc, sz, stock_qty, mrp
+      gen_art_color, var_art, sz, stock_qty, mrp
     """
     if not gen_art_colors:
         return pd.DataFrame()
+
+    # V01 column has the allocatable DC stock for both DH24 and DW01
+    rdc_stock_col = "V01"
 
     conn = _get_connection()
     cur = conn.cursor()
     t0 = time.time()
     try:
         cur.execute("CREATE OR REPLACE TEMPORARY TABLE tmp_gacs_dc (gac VARCHAR(100))")
+        # Extract gen_art from gen_art_color (before the underscore+color part)
         batch_size = 500
         for i in range(0, len(gen_art_colors), batch_size):
             batch = gen_art_colors[i:i + batch_size]
             values = ",".join(f"('{g}')" for g in batch)
             cur.execute(f"INSERT INTO tmp_gacs_dc VALUES {values}")
 
-        cur.execute("""
-            SELECT m.GEN_ART_COLOR, m.SLOC, m.SIZE AS SZ, m.STOCK_QTY, m.MRP
+        cur.execute(f"""
+            SELECT
+                m.GEN_ART_NUMBER || '_' || m.CLR AS GEN_ART_COLOR,
+                m.ARTICLE_NUMBER AS VAR_ART,
+                m.SIZE AS SZ,
+                m.{rdc_stock_col} AS STOCK_QTY,
+                m.MRP
             FROM V2_ALLOCATION.RAW.MSA_ARTICLES m
-            JOIN tmp_gacs_dc t ON m.GEN_ART_COLOR = t.gac
-            WHERE m.STOCK_QTY > 0
+            JOIN tmp_gacs_dc t ON (m.GEN_ART_NUMBER || '_' || m.CLR) = t.gac
+            WHERE m.{rdc_stock_col} > 0
         """)
         cols = [d[0].lower() for d in cur.description]
         rows = cur.fetchall()
         df = pd.DataFrame(rows, columns=cols)
-        logger.info(f"[snowflake] dc_variant_stock({majcat}): {len(df):,} rows in {time.time()-t0:.1f}s")
+        logger.info(f"[snowflake] dc_variant_stock({majcat}, {rdc_code}/{rdc_stock_col}): "
+                     f"{len(df):,} rows in {time.time()-t0:.1f}s")
+        return df
+    finally:
+        cur.close()
+        conn.close()
+
+
+def get_msa_dc_stock(majcat: str, rdc_code: str = "DH24") -> pd.DataFrame:
+    """
+    Get DC stock at gen_art_color level from MSA_ARTICLES (V01 column).
+    This replaces the DC_STOCK_QTY from ARTICLE_SCORES which is total across all DCs.
+
+    Returns: gen_art_color, dc_stock (summed across sizes for that article-color)
+    """
+    conn = _get_connection()
+    cur = conn.cursor()
+    t0 = time.time()
+    try:
+        cur.execute("""
+            SELECT GEN_ART_NUMBER || '_' || CLR AS GEN_ART_COLOR,
+                   SUM(V01) AS DC_STOCK
+            FROM V2_ALLOCATION.RAW.MSA_ARTICLES
+            WHERE MAJ_CAT = %s AND V01 > 0
+            GROUP BY GEN_ART_NUMBER, CLR
+        """, (majcat,))
+        cols = [d[0].lower() for d in cur.description]
+        rows = cur.fetchall()
+        df = pd.DataFrame(rows, columns=cols)
+        logger.info(f"[snowflake] msa_dc_stock({majcat}, V01): {len(df):,} articles, "
+                     f"{int(df['dc_stock'].sum()):,} units in {time.time()-t0:.1f}s")
         return df
     finally:
         cur.close()
