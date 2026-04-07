@@ -208,33 +208,21 @@ class GlobalGreedyFiller:
             if not arts_in_store:
                 continue
 
-            # Classify each article: L (full MBQ), Continuation (partial, DC can top up),
-            # MIX (partial, DC can't fulfill)
-            mbq_opt = mbq_per_opt(st_cd)
+            # Classify: L = in MSA (DC has V01 stock), MIX = NOT in MSA (store only)
             art_list = []
             for gac in arts_in_store:
-                dc_avail = dc_stock_tracker.get(gac, 0)
+                in_msa = gac in msa_articles  # DC has V01 stock for this article
                 info = scored_lookup.get(gac)
                 score = int(info['total_score']) if info else 50
                 st_stock = store_stock_map.get((st_cd, gac), 0)
-                need = max(0, mbq_opt - st_stock)
 
-                if st_stock >= mbq_opt:
-                    # Full MBQ in store — true L, no dispatch needed
-                    status = 'L'
-                    priority = 3  # highest priority for slot
-                elif need > 0 and dc_avail >= need:
-                    # Below MBQ but DC can top up — Continuation
-                    status = 'L'  # still L, will get dispatch in Phase 2
-                    priority = 2
-                else:
-                    # Below MBQ and DC can't fulfill — MIX (dying)
-                    status = 'MIX'
-                    priority = 1  # lowest priority
+                status = 'L' if in_msa else 'MIX'
+                # L articles get priority for slots (they can be replenished)
+                priority = 2 if in_msa else 1
 
                 art_list.append((gac, status, priority, score, st_stock, info))
 
-            # Sort: L first, then by score descending
+            # Sort: L first (priority 2), then MIX (priority 1), then by score desc
             art_list.sort(key=lambda x: (-x[2], -x[3], -x[4]))
 
             store_filled_arts.setdefault(st_cd, set())
