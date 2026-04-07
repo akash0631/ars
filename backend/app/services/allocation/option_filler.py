@@ -231,9 +231,15 @@ class GlobalGreedyFiller:
         # ══════════════════════════════════════════════════════
         # PHASE 2: MIX — Fill remaining slots with NEW articles from DC
         # Only articles NOT already in the store (not L-ART)
+        #
+        # Equitable distribution (matches Excel algorithm):
+        #   Sort by SEG + L-OPT% (ascending) + reverse_option_number
+        #   i.e. stores with LOWEST fill rate get priority.
+        #
+        # Implementation: round-robin over store-segments sorted by
+        # fill rate ascending.  For each under-served store-segment,
+        # pick the highest-scored available article that fits.
         # ══════════════════════════════════════════════════════
-
-        # Equitable distribution: sort by score DESC, then fill_rate ASC
 
         # ── Track per-store article assignments (for max color constraint) ──
         # key = "st_cd|gen_art" → count of colors allocated
@@ -248,146 +254,244 @@ class GlobalGreedyFiller:
             slot_key = f"{a['st_cd']}|{a['gen_art_color']}"
             store_art_slots[slot_key] = store_art_slots.get(slot_key, 0) + 1
 
-        # Sort scored pairs for equitable MIX distribution
+        # ── Build per-store scored article lists (sorted by score DESC) ──
+        # For each store, pre-filter and sort the candidate articles once.
         scored_pairs = scored_pairs.copy()
-        scored_pairs['_store_total_slots'] = scored_pairs['st_cd'].map(
-            lambda x: store_total_slots.get(x, 1)
-        )
-        scored_pairs['_sort_key'] = (
-            scored_pairs['total_score'] * 10000 +
-            (10000 - scored_pairs['_store_total_slots'])
-        )
-        scored_pairs = scored_pairs.sort_values('_sort_key', ascending=False).reset_index(drop=True)
+        scored_pairs = scored_pairs.sort_values('total_score', ascending=False).reset_index(drop=True)
 
-        # ── Walk through scored pairs for MIX filling ──
+        # Build lookup: st_cd → list of candidate article rows (sorted by score desc)
+        store_candidates: Dict[str, List[dict]] = {}
+        # Also track a cursor per store so we don't re-scan from the start
+        store_cursor: Dict[str, int] = {}
+
+        for _, row in scored_pairs.iterrows():
+            st_cd = row['st_cd']
+            if st_cd not in store_candidates:
+                store_candidates[st_cd] = []
+            store_candidates[st_cd].append(row.to_dict())
+
+        for st_cd in store_candidates:
+            store_cursor[st_cd] = 0
+
+        # ── Walk: round-robin over store-segments by fill rate (ascending) ──
         filled_count = 0
-        skipped_no_slot = 0
         skipped_no_stock = 0
         skipped_max_color = 0
         skipped_min_score = 0
         skipped_l_art = 0
 
-        for _, row in scored_pairs.iterrows():
-            st_cd = row['st_cd']
-            gac = row['gen_art_color']
-            gen_art = row.get('gen_art', '')
-            color = row.get('color', '')
-            seg = str(row.get('seg', '')).strip()
-            score = int(row.get('total_score', 0))
+        # We loop until no store-segment made progress in a full pass
+        made_progress = True
+        while made_progress:
+            made_progress = False
 
-            # ── Skip if already assigned as L-ART ──
-            if st_cd in store_filled_arts and gac in store_filled_arts[st_cd]:
-                skipped_l_art += 1
-                continue
+            # Sort store-segments by fill rate ascending (least-filled first),
+            # then by seg for stable ordering (matches Excel SEG sort).
+            # Only consider store-segments that still have empty slots.
+            open_slots = [
+                (key, ss) for key, ss in slot_map.items() if not ss.is_full
+            ]
+            if not open_slots:
+                break
 
-            # ── Check minimum score threshold ──
-            if score < self.min_score_threshold and row.get('is_st_specific', 0) != 1:
-                skipped_min_score += 1
-                continue
+            # fill_rate = filled / total (lower = higher priority)
+            open_slots.sort(key=lambda x: (
+                x[1].filled_slots / max(x[1].total_slots, 1),  # fill rate ASC
+                x[1].seg,                                        # seg ASC
+                -x[1].remaining,                                 # more remaining first
+            ))
 
-            # ── Check DC stock ──
-            dc_qty = dc_stock_tracker.get(gac, 0)
-            if dc_qty <= 0:
-                skipped_no_stock += 1
-                continue
-
-            # ── Find the slot for this store-segment ──
-            slot_key = f"{st_cd}|{seg}"
-            slots = slot_map.get(slot_key)
-
-            if not slots:
-                # Try without segment (MAJCAT-level fallback)
-                # Look for any segment at this store with remaining slots
-                fallback_slots = None
-                for k, v in slot_map.items():
-                    if k.startswith(f"{st_cd}|") and not v.is_full:
-                        fallback_slots = v
-                        break
-                if not fallback_slots:
-                    skipped_no_slot += 1
+            for slot_key, slots in open_slots:
+                if slots.is_full:
                     continue
-                slots = fallback_slots
 
-            if slots.is_full:
-                # Check multi-option eligibility
-                if self.multi_opt_enabled and score >= self.multi_opt_min_score:
-                    art_slot_key = f"{st_cd}|{gac}"
-                    current_slots = store_art_slots.get(art_slot_key, 0)
-                    if current_slots >= self.multi_opt_max_slots:
-                        skipped_no_slot += 1
+                st_cd = slots.st_cd
+                seg = slots.seg
+                candidates = store_candidates.get(st_cd, [])
+                cursor = store_cursor.get(st_cd, 0)
+
+                # Walk through this store's candidates from the cursor
+                assigned_one = False
+                while cursor < len(candidates):
+                    row = candidates[cursor]
+                    cursor += 1
+
+                    gac = row['gen_art_color']
+                    gen_art = row.get('gen_art', '')
+                    color = row.get('color', '')
+                    row_seg = str(row.get('seg', '')).strip()
+                    score = int(row.get('total_score', 0))
+
+                    # ── Skip if already assigned as L-ART ──
+                    if st_cd in store_filled_arts and gac in store_filled_arts[st_cd]:
+                        skipped_l_art += 1
                         continue
-                    # Multi-opt: don't need an empty slot, but deduct stock
-                else:
-                    skipped_no_slot += 1
-                    continue
 
-            # ── Check max colors per store for same generic article ──
-            color_key = f"{st_cd}|{gen_art}"
-            current_colors = store_art_colors.get(color_key, 0)
-            if current_colors >= self.max_colors_per_store:
-                skipped_max_color += 1
-                continue
+                    # ── Check minimum score threshold ──
+                    if score < self.min_score_threshold and row.get('is_st_specific', 0) != 1:
+                        skipped_min_score += 1
+                        continue
 
-            # ── Check if this exact article-color already assigned to this store ──
-            art_slot_key = f"{st_cd}|{gac}"
-            existing_at_store = store_art_slots.get(art_slot_key, 0)
-            if existing_at_store > 0 and not self.multi_opt_enabled:
-                continue
-            if existing_at_store >= self.multi_opt_max_slots:
-                continue
+                    # ── Check DC stock ──
+                    dc_qty = dc_stock_tracker.get(gac, 0)
+                    if dc_qty <= 0:
+                        skipped_no_stock += 1
+                        continue
 
-            # ── ALLOCATE! ──
-            is_multi = existing_at_store > 0
-            opt_no = slots.filled_slots + 1 if not is_multi else slots.filled_slots
+                    # ── Segment matching: prefer same seg, but allow fallback ──
+                    target_slots = slots
+                    if row_seg and row_seg != seg:
+                        # Check if there's a matching segment slot for this store
+                        alt_key = f"{st_cd}|{row_seg}"
+                        alt_slots = slot_map.get(alt_key)
+                        if alt_slots and not alt_slots.is_full:
+                            target_slots = alt_slots
+                        # else: use the current under-filled segment as fallback
 
-            dc_before = dc_qty
-            # Deduct a nominal unit from DC (actual qty decided in size allocation)
-            # For now, deduct 1 unit as a "reservation"
-            dc_stock_tracker[gac] = max(0, dc_qty - 1)
+                    if target_slots.is_full:
+                        continue
 
-            # Determine art status — in Phase 2, these are all MIX (new to store)
-            if row.get('is_st_specific', 0) == 1:
-                art_status = 'ST_SPEC'
-            elif row.get('priority_type') == 'NATIONAL_HERO':
-                art_status = 'HERO'
-            elif row.get('priority_type') == 'CORE_FOCUS':
-                art_status = 'FOCUS'
-            else:
-                art_status = 'MIX'
+                    # ── Check max colors per store for same generic article ──
+                    color_key = f"{st_cd}|{gen_art}"
+                    current_colors = store_art_colors.get(color_key, 0)
+                    if current_colors >= self.max_colors_per_store:
+                        skipped_max_color += 1
+                        continue
 
-            # MIX dispatch: new article going to store, need = MBQ per option (no store stock)
-            mbq_per_opt = store_mbq.get(st_cd, 0) / max(store_total_slots.get(st_cd, 1), 1)
-            dc_remaining = dc_stock_tracker.get(gac, 0)
-            actual_disp = min(round(mbq_per_opt), max(dc_remaining, 0))
+                    # ── Check if this exact article-color already assigned to this store ──
+                    art_slot_key = f"{st_cd}|{gac}"
+                    existing_at_store = store_art_slots.get(art_slot_key, 0)
+                    if existing_at_store > 0 and not self.multi_opt_enabled:
+                        continue
+                    if existing_at_store >= self.multi_opt_max_slots:
+                        continue
 
-            assignment = {
-                'st_cd': st_cd,
-                'majcat': majcat,
-                'seg': seg,
-                'opt_no': opt_no,
-                'gen_art_color': gac,
-                'gen_art': gen_art,
-                'color': color,
-                'total_score': score,
-                'art_status': art_status,
-                'is_multi_opt': 1 if is_multi else 0,
-                'disp_q': actual_disp,
-                'mbq': store_mbq.get(st_cd, 0),
-                'mrp': float(row.get('mrp', 0) or 0),
-                'bgt_sales_per_day': 0,
-                'dc_stock_before': dc_before,
-                'dc_stock_after': max(dc_remaining - actual_disp, 0),
-            }
-            # Deduct dispatched qty from DC stock tracker
-            dc_stock_tracker[gac] = max(dc_remaining - actual_disp, 0)
-            assignments.append(assignment)
+                    # ── ALLOCATE! ──
+                    is_multi = existing_at_store > 0
+                    opt_no = target_slots.filled_slots + 1 if not is_multi else target_slots.filled_slots
 
-            # Update tracking
-            if not is_multi:
-                slots.filled_slots += 1
-            store_art_colors[color_key] = current_colors + 1
-            store_art_slots[art_slot_key] = existing_at_store + 1
-            filled_count += 1
+                    dc_before = dc_qty
+                    dc_stock_tracker[gac] = max(0, dc_qty - 1)
+
+                    # Determine art status
+                    if row.get('is_st_specific', 0) == 1:
+                        art_status = 'ST_SPEC'
+                    elif row.get('priority_type') == 'NATIONAL_HERO':
+                        art_status = 'HERO'
+                    elif row.get('priority_type') == 'CORE_FOCUS':
+                        art_status = 'FOCUS'
+                    else:
+                        art_status = 'MIX'
+
+                    # MIX dispatch: new article, need = MBQ per option (no store stock)
+                    mbq_per_opt = store_mbq.get(st_cd, 0) / max(store_total_slots.get(st_cd, 1), 1)
+                    dc_remaining = dc_stock_tracker.get(gac, 0)
+                    actual_disp = min(round(mbq_per_opt), max(dc_remaining, 0))
+
+                    assignment = {
+                        'st_cd': st_cd,
+                        'majcat': majcat,
+                        'seg': target_slots.seg,
+                        'opt_no': opt_no,
+                        'gen_art_color': gac,
+                        'gen_art': gen_art,
+                        'color': color,
+                        'total_score': score,
+                        'art_status': art_status,
+                        'is_multi_opt': 1 if is_multi else 0,
+                        'disp_q': actual_disp,
+                        'mbq': store_mbq.get(st_cd, 0),
+                        'mrp': float(row.get('mrp', 0) or 0),
+                        'bgt_sales_per_day': 0,
+                        'dc_stock_before': dc_before,
+                        'dc_stock_after': max(dc_remaining - actual_disp, 0),
+                    }
+                    dc_stock_tracker[gac] = max(dc_remaining - actual_disp, 0)
+                    assignments.append(assignment)
+
+                    if not is_multi:
+                        target_slots.filled_slots += 1
+                    store_art_colors[color_key] = current_colors + 1
+                    store_art_slots[art_slot_key] = existing_at_store + 1
+                    if st_cd not in store_filled_arts:
+                        store_filled_arts[st_cd] = set()
+                    store_filled_arts[st_cd].add(gac)
+                    filled_count += 1
+                    assigned_one = True
+                    break  # Move to next store-segment (equitable round-robin)
+
+                store_cursor[st_cd] = cursor
+                if assigned_one:
+                    made_progress = True
+
+        # ── Multi-option pass: after equitable fill, high-score articles
+        #    can claim additional slots at already-full stores ──
+        if self.multi_opt_enabled:
+            for st_cd, candidates in store_candidates.items():
+                for row in candidates:
+                    gac = row['gen_art_color']
+                    score = int(row.get('total_score', 0))
+                    if score < self.multi_opt_min_score:
+                        continue
+                    art_slot_key = f"{st_cd}|{gac}"
+                    existing_at_store = store_art_slots.get(art_slot_key, 0)
+                    if existing_at_store == 0 or existing_at_store >= self.multi_opt_max_slots:
+                        continue
+                    dc_qty = dc_stock_tracker.get(gac, 0)
+                    if dc_qty <= 0:
+                        continue
+
+                    gen_art = row.get('gen_art', '')
+                    color = row.get('color', '')
+                    seg = str(row.get('seg', '')).strip()
+
+                    # Find a slot for this store
+                    target_slots = None
+                    for k, v in slot_map.items():
+                        if k.startswith(f"{st_cd}|"):
+                            target_slots = v
+                            break
+                    if target_slots is None:
+                        continue
+
+                    dc_before = dc_qty
+                    dc_stock_tracker[gac] = max(0, dc_qty - 1)
+
+                    if row.get('is_st_specific', 0) == 1:
+                        art_status = 'ST_SPEC'
+                    elif row.get('priority_type') == 'NATIONAL_HERO':
+                        art_status = 'HERO'
+                    elif row.get('priority_type') == 'CORE_FOCUS':
+                        art_status = 'FOCUS'
+                    else:
+                        art_status = 'MIX'
+
+                    mbq_per_opt = store_mbq.get(st_cd, 0) / max(store_total_slots.get(st_cd, 1), 1)
+                    dc_remaining = dc_stock_tracker.get(gac, 0)
+                    actual_disp = min(round(mbq_per_opt), max(dc_remaining, 0))
+
+                    assignment = {
+                        'st_cd': st_cd,
+                        'majcat': majcat,
+                        'seg': target_slots.seg,
+                        'opt_no': target_slots.filled_slots,
+                        'gen_art_color': gac,
+                        'gen_art': gen_art,
+                        'color': color,
+                        'total_score': score,
+                        'art_status': art_status,
+                        'is_multi_opt': 1,
+                        'disp_q': actual_disp,
+                        'mbq': store_mbq.get(st_cd, 0),
+                        'mrp': float(row.get('mrp', 0) or 0),
+                        'bgt_sales_per_day': 0,
+                        'dc_stock_before': dc_before,
+                        'dc_stock_after': max(dc_remaining - actual_disp, 0),
+                    }
+                    dc_stock_tracker[gac] = max(dc_remaining - actual_disp, 0)
+                    assignments.append(assignment)
+                    store_art_slots[art_slot_key] = existing_at_store + 1
+                    filled_count += 1
 
         # ── Report ──
         filled_slots = sum(s.filled_slots for s in slot_map.values())
@@ -398,7 +502,7 @@ class GlobalGreedyFiller:
             f"L-ART={l_art_filled} (cont={cont_filled}) + MIX={filled_count} = {l_art_filled+filled_count} total, "
             f"{filled_slots}/{total_slots} slots filled ({empty_slots} empty), "
             f"Skipped: {skipped_l_art} already-L-ART, {skipped_no_stock} no-stock, "
-            f"{skipped_no_slot} no-slot, {skipped_max_color} max-color"
+            f"{skipped_max_color} max-color"
         )
 
         if not assignments:

@@ -151,36 +151,33 @@ def get_store_stock(gen_art_colors: List[str] = None, majcat: str = "") -> pd.Da
 
 def get_budget_cascade(majcat: str) -> pd.DataFrame:
     """
-    Get pre-computed budget cascade for a MAJCAT from Snowflake.
-    Deduplicates (Snowflake table has ~6x dupes per store) and adds
-    synthetic 'seg' column for stores with multiple rows.
+    Get budget cascade for a MAJCAT from SCORING.BUDGET_CASCADE (236 MAJCATs, 396K rows).
+    Has real SEG values (E, V, P) and all budget metrics.
 
     Columns returned (lowercase):
-      st_cd, majcat, seg, opt_count, mbq, bgt_disp_q
+      st_cd, majcat, seg, opt_count, mbq, bgt_disp_q, bgt_sales_per_day, priority_rank, opt_density
     """
     conn = _get_connection()
     cur = conn.cursor()
     t0 = time.time()
     try:
         cur.execute("""
-            SELECT ST_CD, MAJCAT, OPT_COUNT, MBQ, BGT_DISP_Q
-            FROM V2_ALLOCATION.RAW.ALLOC_BUDGET_CASCADE
-            WHERE MAJCAT = %s
+            SELECT ST_CD, MAJ_CAT AS MAJCAT, SEG, OPT_COUNT, MBQ, BGT_DISP_Q,
+                   BGT_SALES_PER_DAY, PRIORITY_RANK, OPT_DENSITY
+            FROM V2_ALLOCATION.SCORING.BUDGET_CASCADE
+            WHERE MAJ_CAT = %s AND OPT_COUNT > 0
         """, (majcat,))
         cols = [d[0].lower() for d in cur.description]
         rows = cur.fetchall()
         df = pd.DataFrame(rows, columns=cols)
 
-        # Dedup: keep distinct (st_cd, opt_count, mbq, bgt_disp_q) combos
+        # Dedup: keep distinct combos per store-seg
         raw_count = len(df)
-        df = df.drop_duplicates(subset=["st_cd", "opt_count", "mbq", "bgt_disp_q"])
-
-        # Add synthetic seg column (SEG_0, SEG_1, ...) per store
-        df = df.sort_values(["st_cd", "mbq"], ascending=[True, False])
-        df["seg"] = df.groupby("st_cd").cumcount().apply(lambda i: f"SEG_{i}")
+        df = df.drop_duplicates(subset=["st_cd", "seg", "opt_count", "mbq"])
 
         logger.info(f"[snowflake] budget_cascade({majcat}): {raw_count} raw → "
-                     f"{len(df)} deduped rows, {df['st_cd'].nunique()} stores in {time.time()-t0:.1f}s")
+                     f"{len(df)} deduped, {df['st_cd'].nunique()} stores, "
+                     f"segs={df['seg'].unique().tolist()} in {time.time()-t0:.1f}s")
         return df
     finally:
         cur.close()
