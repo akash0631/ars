@@ -14,58 +14,98 @@ from app.core.config import get_settings
 
 settings = get_settings()
 
+# ============================================================================
+# Lazy Engine Creation — prevents Azure cold-start crash if DB unreachable
+# ============================================================================
+_system_engine = None
+_data_engine = None
 
-# ============================================================================
-# System Database Engine (Claude) - RBAC, RLS, Audit
-# ============================================================================
-system_engine = create_engine(
-    settings.DATABASE_URL,
-    poolclass=QueuePool,
-    pool_size=settings.DB_POOL_SIZE,
-    max_overflow=settings.DB_MAX_OVERFLOW,
-    pool_timeout=settings.DB_POOL_TIMEOUT,
-    pool_recycle=settings.DB_POOL_RECYCLE,
-    pool_pre_ping=settings.DB_POOL_PRE_PING,
-    echo=settings.DEBUG,
-    fast_executemany=True,
-)
+
+def _create_engine_safe(url, label="DB"):
+    """Create SQLAlchemy engine with error handling for cold start."""
+    try:
+        eng = create_engine(
+            url,
+            poolclass=QueuePool,
+            pool_size=settings.DB_POOL_SIZE,
+            max_overflow=settings.DB_MAX_OVERFLOW,
+            pool_timeout=settings.DB_POOL_TIMEOUT,
+            pool_recycle=settings.DB_POOL_RECYCLE,
+            pool_pre_ping=getattr(settings, 'DB_POOL_PRE_PING', True),
+            echo=settings.DEBUG,
+        )
+        logger.info(f"{label} engine created: {url[:50]}...")
+        return eng
+    except Exception as e:
+        logger.error(f"{label} engine creation failed: {e}")
+        return None
+
+
+@property
+def _lazy_system_engine():
+    global _system_engine
+    if _system_engine is None:
+        _system_engine = _create_engine_safe(settings.DATABASE_URL, "System")
+    return _system_engine
+
+
+@property
+def _lazy_data_engine():
+    global _data_engine
+    if _data_engine is None:
+        _data_engine = _create_engine_safe(settings.DATA_DATABASE_URL, "Data")
+    return _data_engine
+
+
+def _get_system_engine():
+    global _system_engine
+    if _system_engine is None:
+        _system_engine = _create_engine_safe(settings.DATABASE_URL, "System")
+    return _system_engine
+
+
+def _get_data_engine():
+    global _data_engine
+    if _data_engine is None:
+        _data_engine = _create_engine_safe(settings.DATA_DATABASE_URL, "Data")
+    return _data_engine
+
+
+# Create eagerly but catch errors — app still starts if DB is down
+try:
+    system_engine = _create_engine_safe(settings.DATABASE_URL, "System")
+except Exception as e:
+    logger.error(f"System DB init failed: {e}")
+    system_engine = None
+
+try:
+    data_engine = _create_engine_safe(settings.DATA_DATABASE_URL, "Data")
+except Exception as e:
+    logger.error(f"Data DB init failed: {e}")
+    data_engine = None
 
 # Alias for backward compatibility
 engine = system_engine
 
 
 # ============================================================================
-# Data Database Engine (Rep_data) - Business Data
-# ============================================================================
-data_engine = create_engine(
-    settings.DATA_DATABASE_URL,
-    poolclass=QueuePool,
-    pool_size=settings.DB_POOL_SIZE,
-    max_overflow=settings.DB_MAX_OVERFLOW,
-    pool_timeout=settings.DB_POOL_TIMEOUT,
-    pool_recycle=settings.DB_POOL_RECYCLE,
-    pool_pre_ping=settings.DB_POOL_PRE_PING,
-    echo=settings.DEBUG,
-    fast_executemany=True,
-)
-
-
-# ============================================================================
 # Session Factories
 # ============================================================================
 SystemSessionLocal = sessionmaker(
-    bind=system_engine,
     autocommit=False,
     autoflush=False,
     expire_on_commit=False,
 )
+if system_engine:
+    SystemSessionLocal.configure(bind=system_engine)
 
 DataSessionLocal = sessionmaker(
-    bind=data_engine,
     autocommit=False,
     autoflush=False,
     expire_on_commit=False,
 )
+if data_engine:
+    DataSessionLocal.configure(bind=data_engine)
 
 # Alias for backward compatibility
 SessionLocal = SystemSessionLocal
@@ -217,21 +257,19 @@ def check_data_db_connection() -> bool:
 # ============================================================================
 # Event Listeners
 # ============================================================================
-@event.listens_for(system_engine, "connect")
-def set_system_connection_options(dbapi_connection, connection_record):
-    """Set connection-level options for system DB."""
-    pass
-
-
-@event.listens_for(data_engine, "connect")
-def set_data_connection_options(dbapi_connection, connection_record):
-    """Set connection-level options for data DB.
-    Use READ COMMITTED SNAPSHOT so readers never block writers and vice versa."""
-    try:
-        cursor = dbapi_connection.cursor()
-        cursor.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-        cursor.close()
-    except Exception:
+if system_engine:
+    @event.listens_for(system_engine, "connect")
+    def set_system_connection_options(dbapi_connection, connection_record):
         pass
+
+if data_engine:
+    @event.listens_for(data_engine, "connect")
+    def set_data_connection_options(dbapi_connection, connection_record):
+        try:
+            cursor = dbapi_connection.cursor()
+            cursor.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+            cursor.close()
+        except Exception:
+            pass
 
 

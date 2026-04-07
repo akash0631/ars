@@ -108,11 +108,13 @@ class GlobalGreedyFiller:
         slot_map: Dict[str, StoreSlots] = {}
         store_total_slots: Dict[str, int] = {}
         store_mbq: Dict[str, int] = {}
+        store_bgt_disp: Dict[str, float] = {}  # total budget dispatch qty per store
         for _, row in budget_cascade.iterrows():
             st = row['st_cd']
             seg = str(row.get('seg', '')).strip()
             opt_count = int(row.get('opt_count', 0))
             mbq_val = int(row.get('mbq', 0) or 0)
+            bgt_disp = float(row.get('bgt_disp_q', 0) or 0)
             if opt_count > 0:
                 key = f"{st}|{seg}"
                 slot_map[key] = StoreSlots(
@@ -120,6 +122,7 @@ class GlobalGreedyFiller:
                 )
                 store_total_slots[st] = store_total_slots.get(st, 0) + opt_count
                 store_mbq[st] = max(store_mbq.get(st, 0), mbq_val)
+                store_bgt_disp[st] = store_bgt_disp.get(st, 0) + bgt_disp
 
         total_slots = sum(s.total_slots for s in slot_map.values())
         logger.info(f"[{majcat}] Total option slots across all stores: {total_slots}")
@@ -194,7 +197,8 @@ class GlobalGreedyFiller:
                         'opt_no': opt_no, 'gen_art_color': gac,
                         'gen_art': gen_art, 'color': color,
                         'total_score': score, 'art_status': art_status,
-                        'is_multi_opt': 0, 'disp_q': 0,
+                        'is_multi_opt': 0,
+                        'disp_q': round(store_bgt_disp.get(st_cd, 0) / max(store_total_slots.get(st_cd, 1), 1)),
                         'mbq': store_mbq.get(st_cd, 0),
                         'mrp': float(score_row.get('mrp', 0) or 0) if score_row is not None else 0,
                         'bgt_sales_per_day': 0,
@@ -352,7 +356,7 @@ class GlobalGreedyFiller:
                 'total_score': score,
                 'art_status': art_status,
                 'is_multi_opt': 1 if is_multi else 0,
-                'disp_q': 0,
+                'disp_q': round(store_bgt_disp.get(st_cd, 0) / max(store_total_slots.get(st_cd, 1), 1)),
                 'mbq': store_mbq.get(st_cd, 0),
                 'mrp': float(row.get('mrp', 0) or 0),
                 'bgt_sales_per_day': 0,
