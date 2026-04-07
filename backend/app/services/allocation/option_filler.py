@@ -208,24 +208,41 @@ class GlobalGreedyFiller:
             if not arts_in_store:
                 continue
 
-            # Build sorted list: L articles first (has DC stock), then MIX, by score desc
+            # Classify each article: L (full MBQ), Continuation (partial, DC can top up),
+            # MIX (partial, DC can't fulfill)
+            mbq_opt = mbq_per_opt(st_cd)
             art_list = []
             for gac in arts_in_store:
-                has_dc = gac in msa_articles
+                dc_avail = dc_stock_tracker.get(gac, 0)
                 info = scored_lookup.get(gac)
                 score = int(info['total_score']) if info else 50
                 st_stock = store_stock_map.get((st_cd, gac), 0)
-                art_list.append((gac, has_dc, score, st_stock, info))
+                need = max(0, mbq_opt - st_stock)
 
-            # Sort: L articles first (has_dc=True), then by score descending
-            art_list.sort(key=lambda x: (-x[1], -x[2], -x[3]))
+                if st_stock >= mbq_opt:
+                    # Full MBQ in store — true L, no dispatch needed
+                    status = 'L'
+                    priority = 3  # highest priority for slot
+                elif need > 0 and dc_avail >= need:
+                    # Below MBQ but DC can top up — Continuation
+                    status = 'L'  # still L, will get dispatch in Phase 2
+                    priority = 2
+                else:
+                    # Below MBQ and DC can't fulfill — MIX (dying)
+                    status = 'MIX'
+                    priority = 1  # lowest priority
+
+                art_list.append((gac, status, priority, score, st_stock, info))
+
+            # Sort: L first, then by score descending
+            art_list.sort(key=lambda x: (-x[2], -x[3], -x[4]))
 
             store_filled_arts.setdefault(st_cd, set())
 
             # Find slot(s) for this store
             store_slot_keys = [k for k, v in slot_map.items() if v.st_cd == st_cd]
 
-            for gac, has_dc, score, st_stock, info in art_list:
+            for gac, art_status_p1, priority, score, st_stock, info in art_list:
                 # Find a matching slot: prefer same segment, fallback to any
                 art_seg = info.get('seg', '') if info else ''
                 target_slots = None
@@ -253,7 +270,7 @@ class GlobalGreedyFiller:
                 if store_art_colors.get(color_key, 0) >= self.max_colors_per_store:
                     continue
 
-                art_status = 'L' if has_dc else 'MIX'
+                art_status = art_status_p1
                 opt_no = target_slots.filled_slots + 1
                 color = info['color'] if info else ''
                 mrp = float(info.get('mrp', 0) or 0) if info else 0
@@ -283,7 +300,7 @@ class GlobalGreedyFiller:
                 store_filled_arts[st_cd].add(gac)
                 store_art_colors[color_key] = store_art_colors.get(color_key, 0) + 1
 
-                if has_dc:
+                if art_status_p1 == 'L':
                     phase1_l += 1
                 else:
                     phase1_mix += 1
