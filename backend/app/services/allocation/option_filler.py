@@ -208,34 +208,26 @@ class GlobalGreedyFiller:
             if not arts_in_store:
                 continue
 
-            # Classify each store article:
-            #   L   = store_stock >= MBQ/opt (full display) OR DC can top up to MBQ/opt
-            #   MIX = store_stock < MBQ/opt AND DC cannot bring it to MBQ/opt
+            # PASS 1: Classify store articles WITHOUT DC (pure store inventory)
+            #   L   = store_stock >= MBQ/opt (can display full set)
+            #   MIX = store_stock < MBQ/opt (can't display, needs help)
             mbq_opt = mbq_per_opt(st_cd)
             art_list = []
             for gac in arts_in_store:
-                dc_avail = dc_stock_tracker.get(gac, 0)
                 info = scored_lookup.get(gac)
                 score = int(info['total_score']) if info else 50
                 st_stock = store_stock_map.get((st_cd, gac), 0)
-                gap = max(0, mbq_opt - st_stock)
 
-                if st_stock >= mbq_opt:
-                    # Already at or above MBQ — L, no dispatch needed
-                    status = 'L'
-                    priority = 3
-                elif gap > 0 and dc_avail >= gap:
-                    # Below MBQ but DC can fill the gap — L (continuation)
+                if st_stock >= mbq_opt and mbq_opt > 0:
                     status = 'L'
                     priority = 2
                 else:
-                    # Below MBQ and DC cannot bring to MBQ — MIX (dying)
-                    status = 'MIX'
+                    status = 'MIX'  # Will try DC conversion in Phase 2
                     priority = 1
 
                 art_list.append((gac, status, priority, score, st_stock, info))
 
-            # Sort: L first, then MIX, then by score desc
+            # Sort: L first (can display), then MIX, then by score desc
             art_list.sort(key=lambda x: (-x[2], -x[3], -x[4]))
 
             store_filled_arts.setdefault(st_cd, set())
@@ -313,56 +305,74 @@ class GlobalGreedyFiller:
                     f"{slots_after_p1} empty slots remaining")
 
         # ================================================================
-        # PHASE 2: Continuation dispatch for L articles
+        # PHASE 2: Try to convert MIX → L using DC, then top up L articles
         # ================================================================
-        # For each L article: if store_stock < MBQ/opt, top up from DC.
-        # need = MBQ/opt - store_stock, capped by DC stock remaining.
-        # DC stock tracker deducts globally.
-        # Process stores by fill rate ascending for equitable DC deduction.
+        # Step A: For each MIX article, check if DC can fill gap to MBQ.
+        #         If yes → convert to L, dispatch the gap.
+        # Step B: For remaining L articles below MBQ, top up from DC.
+        # DC stock deducts globally. Process equitably (lowest fill first).
         # ================================================================
 
-        phase2_dispatched = 0
+        phase2_converted = 0  # MIX → L conversions
+        phase2_topped = 0     # L top-ups
         phase2_qty = 0
 
-        # Sort L assignments by store fill rate ascending for equitable DC distribution
-        l_assignments = [
-            (i, a) for i, a in enumerate(assignments) if a['art_status'] == 'L'
-        ]
-        # Compute store fill rate at this point
+        # Compute store fill rate for equitable ordering
         store_fill_rate = {}
         for s in slot_map.values():
             store_fill_rate[s.st_cd] = min(
-                store_fill_rate.get(s.st_cd, 999),
-                s.fill_rate
+                store_fill_rate.get(s.st_cd, 999), s.fill_rate
             )
+
+        # Step A: Try converting MIX → L (sorted by fill rate ascending)
+        mix_assignments = [
+            (i, a) for i, a in enumerate(assignments) if a['art_status'] == 'MIX'
+        ]
+        mix_assignments.sort(key=lambda x: store_fill_rate.get(x[1]['st_cd'], 0))
+
+        for idx, asgn in mix_assignments:
+            gac = asgn['gen_art_color']
+            st_cd = asgn['st_cd']
+            st_stock = asgn['st_stock']
+            mbq_opt_val = mbq_per_opt(st_cd)
+            gap = max(0, round(mbq_opt_val - st_stock))
+            dc_before = dc_stock_tracker.get(gac, 0)
+
+            if gap > 0 and dc_before >= gap:
+                # DC can fill the full gap → convert MIX to L
+                dc_stock_tracker[gac] = max(0, dc_before - gap)
+                assignments[idx]['art_status'] = 'L'
+                assignments[idx]['disp_q'] = gap
+                assignments[idx]['dc_stock_before'] = dc_before
+                assignments[idx]['dc_stock_after'] = dc_stock_tracker.get(gac, 0)
+                phase2_converted += 1
+                phase2_qty += gap
+
+        # Step B: Top up L articles that are below MBQ
+        l_assignments = [
+            (i, a) for i, a in enumerate(assignments) if a['art_status'] == 'L' and a['disp_q'] == 0
+        ]
         l_assignments.sort(key=lambda x: store_fill_rate.get(x[1]['st_cd'], 0))
 
         for idx, asgn in l_assignments:
             gac = asgn['gen_art_color']
             st_cd = asgn['st_cd']
             st_stock = asgn['st_stock']
-            mbq_opt = mbq_per_opt(st_cd)
-
+            mbq_opt_val = mbq_per_opt(st_cd)
+            need = max(0, round(mbq_opt_val - st_stock))
             dc_before = dc_stock_tracker.get(gac, 0)
-            need = max(0, round(mbq_opt - st_stock))
 
             if need > 0 and dc_before > 0:
                 actual_disp = min(need, dc_before)
                 dc_stock_tracker[gac] = max(0, dc_before - actual_disp)
-            else:
-                actual_disp = 0
-
-            # Update the assignment in-place
-            assignments[idx]['disp_q'] = actual_disp
-            assignments[idx]['dc_stock_before'] = dc_before
-            assignments[idx]['dc_stock_after'] = dc_stock_tracker.get(gac, 0)
-
-            if actual_disp > 0:
-                phase2_dispatched += 1
+                assignments[idx]['disp_q'] = actual_disp
+                assignments[idx]['dc_stock_before'] = dc_before
+                assignments[idx]['dc_stock_after'] = dc_stock_tracker.get(gac, 0)
+                phase2_topped += 1
                 phase2_qty += actual_disp
 
-        logger.info(f"[{majcat}] Phase 2 continuation: {phase2_dispatched} L articles topped up, "
-                    f"{phase2_qty} total units dispatched from DC")
+        logger.info(f"[{majcat}] Phase 2: {phase2_converted} MIX→L conversions, "
+                    f"{phase2_topped} L top-ups, {phase2_qty:.0f} units dispatched")
 
         # ================================================================
         # PHASE 3: Fill empty slots with New L from DC
