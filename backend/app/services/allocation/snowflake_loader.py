@@ -176,9 +176,9 @@ def get_budget_cascade(majcat: str) -> pd.DataFrame:
         rows = cur.fetchall()
         df = pd.DataFrame(rows, columns=cols)
 
-        # Dedup: keep distinct combos per store-seg
+        # Dedup: keep one row per store-seg (Snowflake has near-identical dupes with float noise)
         raw_count = len(df)
-        df = df.drop_duplicates(subset=["st_cd", "seg", "opt_count", "mbq"])
+        df = df.drop_duplicates(subset=["st_cd", "seg"], keep="first")
 
         logger.info(f"[snowflake] budget_cascade({majcat}): {raw_count} raw → "
                      f"{len(df)} deduped, {df['st_cd'].nunique()} stores, "
