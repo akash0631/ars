@@ -40,6 +40,16 @@ class Settings(BaseSettings):
     # Working Database (Business data, dynamic tables, allocations)
     DATA_DB_NAME: str = "Rep_data"
 
+    # Snowflake (read-only — scores + store stock)
+    SNOWFLAKE_ACCOUNT: str = "iafphkw-hh80816"
+    SNOWFLAKE_USER: str = "akashv2kart"
+    SNOWFLAKE_PASSWORD: str = ""               # Override via env / .env
+    SNOWFLAKE_WAREHOUSE: str = "ALLOC_WH"
+
+    # Supabase (budget cascade + size contributions)
+    SUPABASE_URL: str = "https://pymdqnnwwxrgeolvgvgv.supabase.co"
+    SUPABASE_SERVICE_KEY: str = ""             # Override via env / .env
+
     # JWT
     JWT_SECRET_KEY: str = "your-super-secret-key-change-in-production-min-32-chars"
     JWT_ALGORITHM: str = "HS256"
@@ -47,7 +57,7 @@ class Settings(BaseSettings):
     JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
     # Security
-    CORS_ORIGINS: str = '["http://localhost:3000","http://localhost:8000"]'
+    CORS_ORIGINS: str = '["http://localhost:3000","http://localhost:8000","https://replen.v2retail.net"]'
     PASSWORD_MIN_LENGTH: int = 8
     MAX_LOGIN_ATTEMPTS: int = 5
     ACCOUNT_LOCK_DURATION_MINUTES: int = 30

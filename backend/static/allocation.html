@@ -207,12 +207,12 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--tx);min-h
   <div id="resultsEmpty" class="empty-state"><div class="icon">📊</div><h3>No Results Yet</h3><p>Run an allocation from the Run tab, or select a past run from History.</p></div>
   <div id="resultsContent" style="display:none">
     <div class="kpi-strip">
-      <div class="kpi blue"><div class="kpi-glow"></div><div class="kpi-label">Articles Scored</div><div class="kpi-value" id="kpiScored">—</div><div class="kpi-sub" id="kpiScoredSub"></div></div>
-      <div class="kpi green"><div class="kpi-glow"></div><div class="kpi-label">Slots Filled</div><div class="kpi-value" id="kpiSlots">—</div><div class="kpi-sub" id="kpiSlotsSub"></div></div>
-      <div class="kpi purple"><div class="kpi-glow"></div><div class="kpi-label">Variants</div><div class="kpi-value" id="kpiVariants">—</div><div class="kpi-sub" id="kpiVariantsSub"></div></div>
-      <div class="kpi yellow"><div class="kpi-glow"></div><div class="kpi-label">Fill Rate</div><div class="kpi-value" id="kpiFill">—</div><div class="kpi-sub" id="kpiFillSub"></div></div>
-      <div class="kpi blue"><div class="kpi-glow"></div><div class="kpi-label">Stores</div><div class="kpi-value" id="kpiStores">—</div><div class="kpi-sub" id="kpiStoresSub"></div></div>
-      <div class="kpi green"><div class="kpi-glow"></div><div class="kpi-label">Duration</div><div class="kpi-value" id="kpiDuration">—</div><div class="kpi-sub" id="kpiDurationSub"></div></div>
+      <div class="kpi green"><div class="kpi-glow"></div><div class="kpi-label">L-ART %</div><div class="kpi-value" id="kpiLart">—</div><div class="kpi-sub" id="kpiLartSub">articles already in store</div></div>
+      <div class="kpi yellow"><div class="kpi-glow"></div><div class="kpi-label">MIX %</div><div class="kpi-value" id="kpiMix">—</div><div class="kpi-sub" id="kpiMixSub">new articles from DC</div></div>
+      <div class="kpi green"><div class="kpi-glow"></div><div class="kpi-label">Fill Rate</div><div class="kpi-value" id="kpiFill">—</div><div class="kpi-sub" id="kpiFillSub">option slots used</div></div>
+      <div class="kpi blue"><div class="kpi-glow"></div><div class="kpi-label">Total Stores</div><div class="kpi-value" id="kpiStores">—</div><div class="kpi-sub" id="kpiStoresSub">active stores</div></div>
+      <div class="kpi purple"><div class="kpi-glow"></div><div class="kpi-label">Total Qty</div><div class="kpi-value" id="kpiTotalQty">—</div><div class="kpi-sub" id="kpiTotalQtySub">units allocated</div></div>
+      <div class="kpi blue"><div class="kpi-glow"></div><div class="kpi-label">Total Value</div><div class="kpi-value" id="kpiTotalValue">—</div><div class="kpi-sub" id="kpiTotalValueSub">INR</div></div>
     </div>
     <div class="panels">
       <div class="panel"><div class="panel-head"><h3>📈 Score Distribution</h3></div><div class="panel-body"><div class="chart-container" id="scoreChart"></div><div class="chart-axis" id="scoreAxis"></div></div></div>
@@ -220,14 +220,21 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--tx);min-h
     </div>
     <div class="panel">
       <div class="panel-head"><h3>📋 Per-Category Summary</h3></div>
-      <div class="panel-body"><div class="table-scroll" style="max-height:300px"><table class="data-table" id="majcatSummary"><thead><tr><th>MAJCAT</th><th>SEG</th><th>Scored</th><th>Slots</th><th>Variants</th><th>Fill Rate</th><th>Avg Score</th><th>MBQ Range</th><th>Duration</th></tr></thead><tbody></tbody></table></div></div>
+      <div class="panel-body"><div class="table-scroll" style="max-height:400px"><table class="data-table" id="majcatSummary"><thead><tr><th>MAJCAT</th><th>Stores</th><th>MBQ Range</th><th>Scored</th><th>L-ART</th><th>Continuation</th><th>MIX</th><th>Total Slots</th><th>Fill Rate</th><th>Variants</th><th>Total Qty</th><th>Total Value</th><th>Duration</th></tr></thead><tbody></tbody></table></div></div>
     </div>
     <div class="panel">
       <div class="panel-head"><h3>🎯 Option Assignments <span class="cnt" id="optionTotal">0</span></h3><button class="btn btn-sm btn-secondary" onclick="exportCSV('options')">⬇ Export CSV</button></div>
       <div class="panel-body">
         <div class="filter-bar"><input type="text" placeholder="Filter by store, article..." id="optionFilter" oninput="filterOpt()"><select id="optionMajcatF" onchange="filterOpt()"><option value="">All MAJCATs</option></select><select id="optionStoreF" onchange="filterOpt()"><option value="">All Stores</option></select></div>
-        <div class="table-scroll"><table class="data-table" id="optionTable"><thead><tr><th>Store</th><th>MAJCAT</th><th>SEG</th><th>Opt#</th><th>Article+Color</th><th>Gen Art</th><th>Score</th><th>Status</th><th>MBQ</th><th>DC Stock</th></tr></thead><tbody></tbody></table></div>
+        <div class="table-scroll"><table class="data-table" id="optionTable"><thead><tr><th>Store</th><th>MAJCAT</th><th>Opt#</th><th>Article+Color</th><th>Score</th><th>Status</th><th>MBQ</th><th>DC Stock</th><th>Store Stock</th><th>Fill Rate</th></tr></thead><tbody></tbody></table></div>
         <div class="pagination" id="optionPag"></div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h3>🏬 Store Detail <span class="cnt" id="storeDetailTotal">0</span></h3><button class="btn btn-sm btn-secondary" onclick="exportCSV('storeDetail')">⬇ Export CSV</button></div>
+      <div class="panel-body">
+        <div class="filter-bar"><input type="text" placeholder="Filter by store code..." id="storeDetailFilter" oninput="filterStoreDetail()"></div>
+        <div class="table-scroll" style="max-height:500px"><table class="data-table" id="storeDetailTable"><thead><tr><th>Store Code</th><th>MBQ</th><th>L-ART</th><th>Continuation</th><th>MIX</th><th>Total Filled</th><th>Fill Rate</th><th>Total Qty</th><th>Total Value</th></tr></thead><tbody></tbody></table></div>
       </div>
     </div>
   </div>
@@ -282,7 +289,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--tx);min-h
 <script>
 const API='/api/v1/allocation-engine';
 let TOKEN=localStorage.getItem('ars_token')||'';
-let allMajcats=[],selectedMajcats=[],currentRunId=null,currentResults={options:[],variants:[]};
+let allMajcats=[],selectedMajcats=[],currentRunId=null,currentResults={options:[],variants:[],storeDetail:[]};
 const PS=100;
 
 async function login(){try{const r=await fetch('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:'superadmin',password:'Admin@12345'})});const d=await r.json();if(d.access_token){TOKEN=d.access_token;localStorage.setItem('ars_token',TOKEN)}}catch(e){console.error(e)}}
@@ -324,20 +331,67 @@ function animPipe(s){for(let i=1;i<=5;i++){const e=document.getElementById('pipe
 
 async function loadResults(runId,summary){
   document.getElementById('resultsEmpty').style.display='none';document.getElementById('resultsContent').style.display='block';
-  const pm=summary.per_majcat||{};let ts=0,tsl=0,tv=0;
-  Object.values(pm).forEach(m=>{ts+=m.articles_scored||0;tsl+=m.slots_filled||0;tv+=m.variants_allocated||0});
-  const tst=summary.total_stores||Object.values(pm).reduce((a,m)=>Math.max(a,m.stores||0),0);
-  const dur=summary.duration_ms||0;
-  document.getElementById('kpiScored').textContent=ts.toLocaleString();document.getElementById('kpiScoredSub').textContent=Object.keys(pm).length+' categories';
-  document.getElementById('kpiSlots').textContent=tsl.toLocaleString();document.getElementById('kpiSlotsSub').textContent='across '+tst+' stores';
-  document.getElementById('kpiVariants').textContent=tv.toLocaleString();document.getElementById('kpiVariantsSub').textContent='size × color combos';
-  document.getElementById('kpiFill').textContent=tsl>0?'100%':'0%';document.getElementById('kpiFillSub').textContent='option slots used';
-  document.getElementById('kpiStores').textContent=tst.toLocaleString();document.getElementById('kpiStoresSub').textContent='active stores';
-  document.getElementById('kpiDuration').textContent=(dur/1000).toFixed(1)+'s';document.getElementById('kpiDurationSub').textContent=(dur/1000/Math.max(Object.keys(pm).length,1)).toFixed(1)+'s/cat';
-  document.getElementById('resultCount').textContent=tsl.toLocaleString();
+  const pm=summary.per_majcat||{};
+  let tLart=0,tMix=0,tSlots=0,tStores=0,tQty=0,tValue=0,tVariants=0,frSum=0,frCount=0;
+  Object.values(pm).forEach(m=>{
+    tLart+=m.l_art_count||0;tMix+=m.mix_count||0;tSlots+=m.slots_filled||0;
+    tStores+=m.stores||0;tQty+=m.total_qty||0;tValue+=m.total_value||0;
+    tVariants+=m.variants_allocated||0;
+    if(m.fill_rate_avg!=null){frSum+=m.fill_rate_avg;frCount++}
+  });
+  const totalFilled=tLart+tMix;
+  const lartPct=totalFilled>0?(tLart/totalFilled*100).toFixed(1):'0';
+  const mixPct=totalFilled>0?(tMix/totalFilled*100).toFixed(1):'0';
+  const avgFr=frCount>0?(frSum/frCount).toFixed(1):'0';
+  const uniqueStores=summary.total_stores||tStores;
+
+  document.getElementById('kpiLart').textContent=lartPct+'%';
+  document.getElementById('kpiLartSub').textContent=tLart.toLocaleString()+' of '+totalFilled.toLocaleString()+' slots';
+  document.getElementById('kpiMix').textContent=mixPct+'%';
+  document.getElementById('kpiMixSub').textContent=tMix.toLocaleString()+' new from DC';
+  document.getElementById('kpiFill').textContent=avgFr+'%';
+  document.getElementById('kpiFillSub').textContent='avg across categories';
+  document.getElementById('kpiStores').textContent=uniqueStores.toLocaleString();
+  document.getElementById('kpiStoresSub').textContent='active stores';
+  document.getElementById('kpiTotalQty').textContent=tQty.toLocaleString();
+  document.getElementById('kpiTotalQtySub').textContent='units allocated';
+  document.getElementById('kpiTotalValue').textContent=tValue>=10000000?'₹'+(tValue/10000000).toFixed(1)+'Cr':tValue>=100000?'₹'+(tValue/100000).toFixed(1)+'L':'₹'+tValue.toLocaleString();
+  document.getElementById('kpiTotalValueSub').textContent='₹'+tValue.toLocaleString()+' INR';
+  document.getElementById('resultCount').textContent=tSlots.toLocaleString();
+
+  // Per-Category Summary table
   const tb=document.querySelector('#majcatSummary tbody');
-  tb.innerHTML=Object.entries(pm).map(([mc,d])=>'<tr><td style="font-weight:600;color:var(--acc2)">'+mc+'</td><td>'+(d.seg||'APP')+'</td><td>'+(d.articles_scored||0).toLocaleString()+'</td><td>'+(d.slots_filled||0).toLocaleString()+'</td><td>'+(d.variants_allocated||0).toLocaleString()+'</td><td><span class="badge badge-score">'+(d.slots_filled>0?'100%':'0%')+'</span></td><td><span class="badge badge-score">'+(d.avg_score||80)+'</span></td><td>'+(d.mbq_min||0)+'–'+(d.mbq_max||0)+'</td><td>'+((d.duration_ms||0)/1000).toFixed(1)+'s</td></tr>').join('');
+  tb.innerHTML=Object.entries(pm).map(([mc,d])=>{
+    const fr=d.fill_rate_avg!=null?d.fill_rate_avg:0;
+    const frCls=fr>90?'background:rgba(5,150,105,.1);color:var(--acc-g);border:1px solid rgba(5,150,105,.2)':fr>=50?'background:rgba(217,119,6,.1);color:var(--acc-y);border:1px solid rgba(217,119,6,.2)':'background:rgba(220,38,38,.1);color:var(--acc-r);border:1px solid rgba(220,38,38,.2)';
+    const val=d.total_value||0;const valStr=val>=10000000?'₹'+(val/10000000).toFixed(1)+'Cr':val>=100000?'₹'+(val/100000).toFixed(1)+'L':'₹'+val.toLocaleString();
+    return'<tr><td style="font-weight:600;color:var(--acc2)">'+mc+'</td><td>'+(d.stores||0).toLocaleString()+'</td><td>'+(d.mbq_min||0)+'–'+(d.mbq_max||0)+'</td><td>'+(d.articles_scored||0).toLocaleString()+'</td><td>'+(d.l_art_count||0).toLocaleString()+'</td><td>'+(d.continuation_count||0).toLocaleString()+'</td><td>'+(d.mix_count||0).toLocaleString()+'</td><td>'+(d.slots_filled||0).toLocaleString()+'</td><td><span class="badge" style="'+frCls+'">'+fr.toFixed(1)+'%</span></td><td>'+(d.variants_allocated||0).toLocaleString()+'</td><td>'+(d.total_qty||0).toLocaleString()+'</td><td>'+valStr+'</td><td>'+((d.duration_ms||0)/1000).toFixed(1)+'s</td></tr>'
+  }).join('');
+
+  // Store Detail table
+  const sd=summary.per_store||{};
+  const storeRows=Object.entries(sd).sort((a,b)=>(b[1].total_filled||0)-(a[1].total_filled||0));
+  currentResults.storeDetail=storeRows;
+  document.getElementById('storeDetailTotal').textContent=storeRows.length;
+  renderStoreDetail(storeRows);
+
   await loadOptions(runId);await loadVariants(runId);
+}
+
+function renderStoreDetail(rows){
+  document.querySelector('#storeDetailTable tbody').innerHTML=rows.map(([code,s])=>{
+    const filled=(s.l_art_count||0)+(s.mix_count||0);const mbq=s.mbq||0;
+    const fr=mbq>0?(filled/mbq*100).toFixed(1):0;
+    const frCls=fr>90?'background:rgba(5,150,105,.1);color:var(--acc-g);border:1px solid rgba(5,150,105,.2)':fr>=50?'background:rgba(217,119,6,.1);color:var(--acc-y);border:1px solid rgba(217,119,6,.2)':'background:rgba(220,38,38,.1);color:var(--acc-r);border:1px solid rgba(220,38,38,.2)';
+    const val=s.total_value||0;const valStr=val>=100000?'₹'+(val/100000).toFixed(1)+'L':'₹'+val.toLocaleString();
+    return'<tr><td style="font-weight:600;color:var(--acc2)">'+code+'</td><td>'+mbq+'</td><td>'+(s.l_art_count||0)+'</td><td>'+(s.continuation_count||0)+'</td><td>'+(s.mix_count||0)+'</td><td style="font-weight:700">'+filled+'</td><td><span class="badge" style="'+frCls+'">'+fr+'%</span></td><td>'+(s.total_qty||0).toLocaleString()+'</td><td>'+valStr+'</td></tr>'
+  }).join('');
+}
+
+function filterStoreDetail(){
+  const q=document.getElementById('storeDetailFilter').value.toLowerCase();
+  const filtered=(currentResults.storeDetail||[]).filter(([code])=>code.toLowerCase().includes(q));
+  renderStoreDetail(filtered);
 }
 
 async function loadOptions(runId,page=0){
@@ -346,7 +400,7 @@ async function loadOptions(runId,page=0){
   renderOpt(currentResults.options);renderScoreChart(currentResults.options);buildOptFilters(currentResults.options);
   renderPag('optionPag',d.total||0,page,p=>'loadOptions("'+runId+'",'+p+')')}catch(e){console.error(e)}
 }
-function renderOpt(data){document.querySelector('#optionTable tbody').innerHTML=data.map(r=>'<tr><td style="font-weight:600;color:var(--acc2)">'+(r.st_cd||'')+'</td><td>'+(r.majcat||'')+'</td><td>'+(r.seg||'APP')+'</td><td style="text-align:center">'+(r.opt_no||'')+'</td><td>'+(r.gen_art_color||'')+'</td><td>'+(r.gen_art||'')+'</td><td><span class="badge badge-score">'+(r.total_score||0)+'</span></td><td><span class="badge badge-mix">'+(r.art_status||'MIX')+'</span></td><td>'+(r.mbq||0)+'</td><td>'+(r.dc_stock_before||0).toLocaleString()+'</td></tr>').join('')}
+function renderOpt(data){document.querySelector('#optionTable tbody').innerHTML=data.map(r=>{const st=r.art_status||'MIX';const stCls=st==='L'?'background:rgba(5,150,105,.1);color:var(--acc-g);border:1px solid rgba(5,150,105,.2)':st==='L_ONLY'?'background:rgba(37,99,235,.1);color:var(--acc2);border:1px solid rgba(37,99,235,.2)':'background:rgba(217,119,6,.1);color:var(--acc-y);border:1px solid rgba(217,119,6,.2)';const fr=r.fill_rate!=null?r.fill_rate+'%':'—';return'<tr><td style="font-weight:600;color:var(--acc2)">'+(r.st_cd||'')+'</td><td>'+(r.majcat||'')+'</td><td style="text-align:center">'+(r.opt_no||'')+'</td><td>'+(r.gen_art_color||'')+'</td><td><span class="badge badge-score">'+(r.total_score||0)+'</span></td><td><span class="badge" style="'+stCls+'">'+st+'</span></td><td>'+(r.mbq||0)+'</td><td>'+(r.dc_stock_before||0).toLocaleString()+'</td><td>'+(r.store_stock||0).toLocaleString()+'</td><td>'+fr+'</td></tr>'}).join('')}
 function buildOptFilters(data){const mcs=[...new Set(data.map(r=>r.majcat))].sort();const sts=[...new Set(data.map(r=>r.st_cd))].sort();document.getElementById('optionMajcatF').innerHTML='<option value="">All MAJCATs</option>'+mcs.map(m=>'<option>'+m+'</option>').join('');document.getElementById('optionStoreF').innerHTML='<option value="">All Stores</option>'+sts.map(s=>'<option>'+s+'</option>').join('')}
 function filterOpt(){const q=document.getElementById('optionFilter').value.toLowerCase();const mc=document.getElementById('optionMajcatF').value;const st=document.getElementById('optionStoreF').value;renderOpt(currentResults.options.filter(r=>(!q||(r.st_cd||'').toLowerCase().includes(q)||(r.gen_art_color||'').toLowerCase().includes(q))&&(!mc||r.majcat===mc)&&(!st||r.st_cd===st)))}
 
@@ -390,7 +444,7 @@ function checkSources(){document.getElementById('dataSources').innerHTML=[
   ['Hero/Focus','○ Not loaded (optional)','var(--tx3)'],['Store Specific','○ Not loaded (optional)','var(--tx3)']
 ].map(([k,v,c])=>'<div class="setting-row"><span class="key">'+k+'</span><span class="val" style="color:'+c+'">'+v+'</span></div>').join('')}
 
-function exportCSV(type){const data=type==='options'?currentResults.options:currentResults.variants;if(!data.length)return alert('No data');const ks=Object.keys(data[0]);let csv=ks.join(',')+'\n';data.forEach(r=>{csv+=ks.map(k=>'"'+((r[k]||'').toString().replace(/"/g,'""'))+'"').join(',')+'\n'});const b=new Blob([csv],{type:'text/csv'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='allocation_'+type+'_'+(currentRunId||'export')+'.csv';a.click()}
+function exportCSV(type){let data;if(type==='storeDetail'){data=(currentResults.storeDetail||[]).map(([code,s])=>{const filled=(s.l_art_count||0)+(s.mix_count||0);const mbq=s.mbq||0;return{store_code:code,mbq:mbq,l_art:s.l_art_count||0,continuation:s.continuation_count||0,mix:s.mix_count||0,total_filled:filled,fill_rate:mbq>0?(filled/mbq*100).toFixed(1)+'%':'0%',total_qty:s.total_qty||0,total_value:s.total_value||0}})}else{data=type==='options'?currentResults.options:currentResults.variants}if(!data||!data.length)return alert('No data');const ks=Object.keys(data[0]);let csv=ks.join(',')+'\n';data.forEach(r=>{csv+=ks.map(k=>'"'+((r[k]||'').toString().replace(/"/g,'""'))+'"').join(',')+'\n'});const b=new Blob([csv],{type:'text/csv'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='allocation_'+type+'_'+(currentRunId||'export')+'.csv';a.click()}
 
 async function init(){await login();loadMajcats();checkSources()}
 init();

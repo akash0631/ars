@@ -36,6 +36,9 @@ loguru==0.7.2
 # Cloud Storage (Azure Blob — for exports/uploads in production)
 azure-storage-blob==12.19.0
 
+# Snowflake
+snowflake-connector-python==3.12.3
+
 # Testing
 pytest==8.0.1
 pytest-asyncio==0.23.5

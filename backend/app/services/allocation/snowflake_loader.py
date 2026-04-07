@@ -1,131 +1,229 @@
 """
-Snowflake Data Loader — reads pre-cached Snowflake data from JSON files.
+Snowflake Data Loader — DIRECT connection to Snowflake.
+Reads pre-computed scores, store stock, budget cascades.
+This is the ONLY source of truth for Engines 1+2 data.
 
 Architecture:
-  Snowflake (246M scored pairs, 4.97M store stock) → cached as JSON → Azure reads JSON
-  
-  The JSON cache is refreshed by:
-  1. Daily cron job that queries Snowflake and saves results
-  2. Manual refresh via /allocation-engine/refresh-snowflake endpoint
-  3. Deployment includes latest cached data
+  Snowflake (246M scored pairs, 4.97M store stock) → Azure ARS reads via snowflake-connector-python
 
-Files:
-  data/snowflake/scored_pairs.json.gz → {MAJCAT: {scored: [...], stock: [...]}}
+Lazy import: snowflake.connector is only imported when a query runs,
+not at module load — this prevents Azure cold-start crashes.
 """
 import logging
-import gzip
-import json
 import os
+import time
+from typing import List, Dict, Any, Optional
+
 import pandas as pd
-from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
-# Cache in memory after first load
-_cache = None
-_cache_path = None
+# Snowflake connection params
+SF_ACCOUNT = os.getenv("SNOWFLAKE_ACCOUNT", "iafphkw-hh80816")
+SF_USER = os.getenv("SNOWFLAKE_USER", "akashv2kart")
+SF_PASSWORD = os.getenv("SNOWFLAKE_PASSWORD", "SVXqEe5pDdamMb9")
+SF_WAREHOUSE = os.getenv("SNOWFLAKE_WAREHOUSE", "ALLOC_WH")
+SF_DATABASE = "V2_ALLOCATION"
+SF_SCHEMA = "RESULTS"
 
 
-def _find_cache_file() -> str:
-    """Find the Snowflake cache file."""
-    candidates = [
-        os.path.join(os.path.dirname(__file__), '..', '..', '..', 'data', 'snowflake', 'scored_pairs.json.gz'),
-        '/home/site/wwwroot/data/snowflake/scored_pairs.json.gz',  # Azure App Service
-        os.path.join(os.getcwd(), 'data', 'snowflake', 'scored_pairs.json.gz'),
-    ]
-    for p in candidates:
-        fp = os.path.abspath(p)
-        if os.path.exists(fp):
-            return fp
-    return ''
+def _get_connection():
+    """Create a fresh Snowflake connection. Lazy import to avoid cold-start crash."""
+    import snowflake.connector
+    return snowflake.connector.connect(
+        account=SF_ACCOUNT,
+        user=SF_USER,
+        password=SF_PASSWORD,
+        database=SF_DATABASE,
+        schema=SF_SCHEMA,
+        warehouse=SF_WAREHOUSE,
+        login_timeout=30,
+        network_timeout=60,
+    )
 
 
-def _load_cache():
-    """Load the JSON cache into memory."""
-    global _cache, _cache_path
-    if _cache is not None:
-        return _cache
-
-    path = _find_cache_file()
-    if not path:
-        logger.warning("No Snowflake cache file found")
-        _cache = {}
-        return _cache
-
+def test_connection() -> Dict[str, Any]:
+    """Test Snowflake connectivity and return row counts."""
+    conn = _get_connection()
+    cur = conn.cursor()
     try:
-        with gzip.open(path, 'rt') as f:
-            _cache = json.load(f)
-        _cache_path = path
-        majcats = list(_cache.keys())
-        total_scored = sum(len(v.get('scored', [])) for v in _cache.values())
-        total_stock = sum(len(v.get('stock', [])) for v in _cache.values())
-        logger.info(f"Loaded Snowflake cache: {len(majcats)} MAJCATs, "
-                    f"{total_scored:,} scored pairs, {total_stock:,} store stock rows "
-                    f"from {path}")
-        return _cache
-    except Exception as e:
-        logger.error(f"Failed to load Snowflake cache: {e}")
-        _cache = {}
-        return _cache
-
-
-def get_scored_pairs(majcat: str, top_n: int = 200) -> pd.DataFrame:
-    """Get pre-computed scored pairs from Snowflake cache."""
-    cache = _load_cache()
-    mc_data = cache.get(majcat, {})
-    scored_list = mc_data.get('scored', [])
-
-    if not scored_list:
-        logger.warning(f"[{majcat}] No scored pairs in Snowflake cache")
-        return pd.DataFrame()
-
-    df = pd.DataFrame(scored_list)
-    logger.info(f"[{majcat}] Snowflake scores: {len(df):,} pairs, "
-                f"{df['st_cd'].nunique()} stores, {df['gen_art_color'].nunique()} articles, "
-                f"score range: {df['total_score'].min()}-{df['total_score'].max()}")
-    return df
-
-
-def get_store_stock(gen_art_colors: List[str] = None, majcat: str = None) -> pd.DataFrame:
-    """Get store stock from Snowflake cache."""
-    cache = _load_cache()
-    mc_data = cache.get(majcat, {})
-    stock_list = mc_data.get('stock', [])
-
-    if not stock_list:
-        logger.warning(f"[{majcat}] No store stock in Snowflake cache")
-        return pd.DataFrame()
-
-    df = pd.DataFrame(stock_list)
-
-    # Filter to scored articles if specified
-    if gen_art_colors:
-        gac_set = set(gen_art_colors)
-        df = df[df['gen_art_color'].isin(gac_set)]
-
-    logger.info(f"[{majcat}] Store stock: {len(df):,} rows, "
-                f"{df['st_cd'].nunique()} stores, {df['gen_art_color'].nunique()} articles")
-    return df
-
-
-def get_budget_cascade(majcat: str) -> pd.DataFrame:
-    """Get budget cascade — not cached, use Supabase/SQL."""
-    return pd.DataFrame()
-
-
-def get_dc_variant_stock(gen_art_colors: List[str], majcat: str) -> pd.DataFrame:
-    """Get DC variant stock — not cached, use SQL."""
-    return pd.DataFrame()
+        cur.execute("SELECT COUNT(*) FROM ARTICLE_SCORES")
+        scores = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM V2RETAIL.GOLD.FACT_STOCK_GENCOLOR")
+        stock = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(DISTINCT MAJCAT) FROM ARTICLE_SCORES")
+        majcats = cur.fetchone()[0]
+        return {
+            "status": "connected",
+            "article_scores": scores,
+            "store_stock": stock,
+            "majcats": majcats,
+        }
+    finally:
+        cur.close()
+        conn.close()
 
 
 def get_available_majcats() -> List[str]:
-    """Get list of MAJCATs available in cache."""
-    cache = _load_cache()
-    return list(cache.keys())
+    """Get list of all MAJCATs with scored data."""
+    conn = _get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT DISTINCT MAJCAT FROM ARTICLE_SCORES ORDER BY MAJCAT")
+        return [r[0] for r in cur.fetchall()]
+    finally:
+        cur.close()
+        conn.close()
+
+
+def get_scored_pairs(majcat: str, top_n: int = 200) -> pd.DataFrame:
+    """
+    Get top-N scored article×store pairs per store for a MAJCAT.
+    Returns ~91K rows for M_JEANS (455 stores × 200) in ~6s.
+
+    Columns returned (lowercase for engine compatibility):
+      st_cd, gen_art_color, gen_art, color, seg, total_score,
+      dc_stock_qty, mrp, vendor_code, fabric, season,
+      is_st_specific, priority_type
+    """
+    conn = _get_connection()
+    cur = conn.cursor()
+    t0 = time.time()
+    try:
+        cur.execute(f"""
+            SELECT ST_CD, GEN_ART_COLOR, GEN_ART, COLOR, SEG, TOTAL_SCORE,
+                   DC_STOCK_QTY, MRP, VENDOR_CODE, FABRIC, SEASON,
+                   IS_ST_SPECIFIC, PRIORITY_TYPE
+            FROM ARTICLE_SCORES
+            WHERE MAJCAT = %s
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY ST_CD ORDER BY TOTAL_SCORE DESC) <= {top_n}
+        """, (majcat,))
+        cols = [d[0].lower() for d in cur.description]
+        rows = cur.fetchall()
+        df = pd.DataFrame(rows, columns=cols)
+        logger.info(f"[snowflake] scored_pairs({majcat}): {len(df):,} rows, "
+                     f"{df['st_cd'].nunique()} stores in {time.time()-t0:.1f}s")
+        return df
+    finally:
+        cur.close()
+        conn.close()
+
+
+def get_store_stock(gen_art_colors: List[str] = None, majcat: str = "") -> pd.DataFrame:
+    """
+    Get store stock for scored articles from FACT_STOCK_GENCOLOR.
+    Uses temp table + JOIN for efficiency.
+    Returns ~35K rows for M_JEANS in ~3s.
+
+    Columns returned (lowercase):
+      st_cd, gen_art_color, stock_qty
+    """
+    if not gen_art_colors:
+        return pd.DataFrame(columns=["st_cd", "gen_art_color", "stock_qty"])
+
+    conn = _get_connection()
+    cur = conn.cursor()
+    t0 = time.time()
+    try:
+        cur.execute("CREATE OR REPLACE TEMPORARY TABLE tmp_gacs (gac VARCHAR(100))")
+        batch_size = 500
+        for i in range(0, len(gen_art_colors), batch_size):
+            batch = gen_art_colors[i:i + batch_size]
+            values = ",".join(f"('{g}')" for g in batch)
+            cur.execute(f"INSERT INTO tmp_gacs VALUES {values}")
+
+        cur.execute("""
+            SELECT f.STORE_CODE AS ST_CD, f.GENCOLOR_KEY AS GEN_ART_COLOR, f.STK_QTY AS STOCK_QTY
+            FROM V2RETAIL.GOLD.FACT_STOCK_GENCOLOR f
+            JOIN tmp_gacs t ON f.GENCOLOR_KEY = t.gac
+            WHERE f.STK_QTY > 0
+        """)
+        cols = [d[0].lower() for d in cur.description]
+        rows = cur.fetchall()
+        df = pd.DataFrame(rows, columns=cols)
+        logger.info(f"[snowflake] store_stock({majcat}): {len(df):,} rows, "
+                     f"{df['st_cd'].nunique()} stores in {time.time()-t0:.1f}s")
+        return df
+    finally:
+        cur.close()
+        conn.close()
+
+
+def get_budget_cascade(majcat: str) -> pd.DataFrame:
+    """
+    Get pre-computed budget cascade for a MAJCAT from Snowflake.
+    Deduplicates (Snowflake table has ~6x dupes per store) and adds
+    synthetic 'seg' column for stores with multiple rows.
+
+    Columns returned (lowercase):
+      st_cd, majcat, seg, opt_count, mbq, bgt_disp_q
+    """
+    conn = _get_connection()
+    cur = conn.cursor()
+    t0 = time.time()
+    try:
+        cur.execute("""
+            SELECT ST_CD, MAJCAT, OPT_COUNT, MBQ, BGT_DISP_Q
+            FROM V2_ALLOCATION.RAW.ALLOC_BUDGET_CASCADE
+            WHERE MAJCAT = %s
+        """, (majcat,))
+        cols = [d[0].lower() for d in cur.description]
+        rows = cur.fetchall()
+        df = pd.DataFrame(rows, columns=cols)
+
+        # Dedup: keep distinct (st_cd, opt_count, mbq, bgt_disp_q) combos
+        raw_count = len(df)
+        df = df.drop_duplicates(subset=["st_cd", "opt_count", "mbq", "bgt_disp_q"])
+
+        # Add synthetic seg column (SEG_0, SEG_1, ...) per store
+        df = df.sort_values(["st_cd", "mbq"], ascending=[True, False])
+        df["seg"] = df.groupby("st_cd").cumcount().apply(lambda i: f"SEG_{i}")
+
+        logger.info(f"[snowflake] budget_cascade({majcat}): {raw_count} raw → "
+                     f"{len(df)} deduped rows, {df['st_cd'].nunique()} stores in {time.time()-t0:.1f}s")
+        return df
+    finally:
+        cur.close()
+        conn.close()
+
+
+def get_dc_variant_stock(gen_art_colors: List[str], majcat: str = "") -> pd.DataFrame:
+    """
+    Get DC variant-level stock from MSA_ARTICLES for size allocation.
+
+    Columns returned (lowercase):
+      gen_art_color, sloc, sz, stock_qty, mrp
+    """
+    if not gen_art_colors:
+        return pd.DataFrame()
+
+    conn = _get_connection()
+    cur = conn.cursor()
+    t0 = time.time()
+    try:
+        cur.execute("CREATE OR REPLACE TEMPORARY TABLE tmp_gacs_dc (gac VARCHAR(100))")
+        batch_size = 500
+        for i in range(0, len(gen_art_colors), batch_size):
+            batch = gen_art_colors[i:i + batch_size]
+            values = ",".join(f"('{g}')" for g in batch)
+            cur.execute(f"INSERT INTO tmp_gacs_dc VALUES {values}")
+
+        cur.execute("""
+            SELECT m.GEN_ART_COLOR, m.SLOC, m.SIZE AS SZ, m.STOCK_QTY, m.MRP
+            FROM V2_ALLOCATION.RAW.MSA_ARTICLES m
+            JOIN tmp_gacs_dc t ON m.GEN_ART_COLOR = t.gac
+            WHERE m.STOCK_QTY > 0
+        """)
+        cols = [d[0].lower() for d in cur.description]
+        rows = cur.fetchall()
+        df = pd.DataFrame(rows, columns=cols)
+        logger.info(f"[snowflake] dc_variant_stock({majcat}): {len(df):,} rows in {time.time()-t0:.1f}s")
+        return df
+    finally:
+        cur.close()
+        conn.close()
 
 
 def reload_cache():
-    """Force reload of cache from disk."""
-    global _cache
-    _cache = None
-    _load_cache()
+    """No-op for direct connection mode. Kept for API compatibility."""
+    pass
