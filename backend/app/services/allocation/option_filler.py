@@ -235,67 +235,92 @@ class GlobalGreedyFiller:
             # Find slot(s) for this store
             store_slot_keys = [k for k, v in slot_map.items() if v.st_cd == st_cd]
 
+            # First pass: assign L articles (1 per slot)
             for gac, art_status_p1, priority, score, st_stock, info in art_list:
-                # Find a matching slot: prefer same segment, fallback to any
+                if art_status_p1 != 'L':
+                    continue
                 art_seg = info.get('seg', '') if info else ''
                 target_slots = None
-                # First try: match article segment to slot segment
                 for sk in store_slot_keys:
                     s = slot_map[sk]
                     if not s.is_full and art_seg and s.seg == art_seg:
-                        target_slots = s
-                        break
-                # Fallback: any non-full slot
+                        target_slots = s; break
                 if target_slots is None:
                     for sk in store_slot_keys:
                         if not slot_map[sk].is_full:
-                            target_slots = slot_map[sk]
-                            break
+                            target_slots = slot_map[sk]; break
                 if target_slots is None:
-                    break  # All slots for this store are full
+                    break
 
                 if gac in store_filled_arts[st_cd]:
                     continue
-
-                # Check max colors per generic article
-                gen_art = info['gen_art'] if info else gac.split('_')[0]
+                gen_art = info['gen_art'] if info else str(gac).split('_')[0]
                 color_key = f"{st_cd}|{gen_art}"
                 if store_art_colors.get(color_key, 0) >= self.max_colors_per_store:
                     continue
 
-                art_status = art_status_p1
-                opt_no = target_slots.filled_slots + 1
-                color = info['color'] if info else ''
-                mrp = float(info.get('mrp', 0) or 0) if info else 0
-
-                # Phase 1 does NOT dispatch -- just tags. Dispatch happens in Phase 2.
-                assignment = {
-                    'st_cd': st_cd,
-                    'majcat': majcat,
-                    'seg': target_slots.seg,
-                    'opt_no': opt_no,
-                    'gen_art_color': gac,
-                    'gen_art': gen_art,
-                    'color': color,
-                    'total_score': score,
-                    'art_status': art_status,
-                    'is_multi_opt': 0,
-                    'disp_q': 0,       # Will be set in Phase 2 for L articles
-                    'mbq': store_mbq.get(st_cd, 0),
-                    'mrp': mrp,
-                    'bgt_sales_per_day': 0,
-                    'dc_stock_before': 0,
-                    'dc_stock_after': 0,
+                assignments.append({
+                    'st_cd': st_cd, 'majcat': majcat, 'seg': target_slots.seg,
+                    'opt_no': target_slots.filled_slots + 1,
+                    'gen_art_color': gac, 'gen_art': gen_art,
+                    'color': info['color'] if info else '',
+                    'total_score': score, 'art_status': 'L', 'is_multi_opt': 0,
+                    'disp_q': 0, 'mbq': store_mbq.get(st_cd, 0),
+                    'mrp': float(info.get('mrp', 0) or 0) if info else 0,
+                    'bgt_sales_per_day': 0, 'dc_stock_before': 0, 'dc_stock_after': 0,
                     'st_stock': st_stock,
-                }
-                assignments.append(assignment)
+                })
                 target_slots.filled_slots += 1
                 store_filled_arts[st_cd].add(gac)
                 store_art_colors[color_key] = store_art_colors.get(color_key, 0) + 1
+                phase1_l += 1
 
-                if art_status_p1 == 'L':
-                    phase1_l += 1
-                else:
+            # Second pass: bundle MIX articles into REMAINING slots only
+            # MIX can only fill slots that L didn't take
+            # Multiple MIX articles share one slot — new slot when cumulative qty >= MBQ/opt
+            remaining_slots_for_mix = sum(
+                1 for sk in store_slot_keys if not slot_map[sk].is_full
+            )
+            if remaining_slots_for_mix > 0 and mbq_opt > 0:
+                mix_articles_for_store = [
+                    (gac, st_stock, info, score)
+                    for gac, art_status_p1, priority, score, st_stock, info in art_list
+                    if art_status_p1 == 'MIX' and gac not in store_filled_arts.get(st_cd, set())
+                ]
+
+                mix_cumulative_qty = 0
+                mix_slots_used = 0
+                current_mix_slot = None
+
+                for gac, st_stock, info, score in mix_articles_for_store:
+                    if current_mix_slot is None or mix_cumulative_qty >= mbq_opt:
+                        # Need a new MIX slot
+                        if mix_slots_used >= remaining_slots_for_mix:
+                            break  # Can't use more slots than available
+                        current_mix_slot = None
+                        for sk in store_slot_keys:
+                            if not slot_map[sk].is_full:
+                                current_mix_slot = slot_map[sk]; break
+                        if current_mix_slot is None:
+                            break
+                        mix_cumulative_qty = 0
+                        current_mix_slot.filled_slots += 1
+                        mix_slots_used += 1
+
+                    gen_art = info['gen_art'] if info else str(gac).split('_')[0]
+                    assignments.append({
+                        'st_cd': st_cd, 'majcat': majcat, 'seg': current_mix_slot.seg,
+                        'opt_no': current_mix_slot.filled_slots,
+                        'gen_art_color': gac, 'gen_art': gen_art,
+                        'color': info['color'] if info else '',
+                        'total_score': score, 'art_status': 'MIX', 'is_multi_opt': 0,
+                        'disp_q': 0, 'mbq': store_mbq.get(st_cd, 0),
+                        'mrp': float(info.get('mrp', 0) or 0) if info else 0,
+                        'bgt_sales_per_day': 0, 'dc_stock_before': 0, 'dc_stock_after': 0,
+                        'st_stock': st_stock,
+                    })
+                    store_filled_arts[st_cd].add(gac)
+                    mix_cumulative_qty += st_stock
                     phase1_mix += 1
 
         phase1_total = phase1_l + phase1_mix
