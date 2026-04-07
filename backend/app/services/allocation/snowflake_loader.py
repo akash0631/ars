@@ -246,8 +246,9 @@ def get_dc_variant_stock(gen_art_colors: List[str], majcat: str = "", rdc_code: 
 
 def get_msa_dc_stock(majcat: str, rdc_code: str = "DH24") -> pd.DataFrame:
     """
-    Get DC stock at gen_art_color level from MSA_ARTICLES (V01 column).
-    This replaces the DC_STOCK_QTY from ARTICLE_SCORES which is total across all DCs.
+    Get DC stock at gen_art_color level from MSA_ARTICLES for a specific DC.
+    MSA_ARTICLES.STORE_CODE = DC code (DH24, DW01, DH26).
+    Uses TOTAL_DC_STOCK column (V01/V04 are mostly NULL).
 
     Returns: gen_art_color, dc_stock (summed across sizes for that article-color)
     """
@@ -257,15 +258,15 @@ def get_msa_dc_stock(majcat: str, rdc_code: str = "DH24") -> pd.DataFrame:
     try:
         cur.execute("""
             SELECT GEN_ART_NUMBER || '_' || CLR AS GEN_ART_COLOR,
-                   SUM(V01) AS DC_STOCK
+                   SUM(COALESCE(V01, 0)) AS DC_STOCK
             FROM V2_ALLOCATION.RAW.MSA_ARTICLES
-            WHERE MAJ_CAT = %s AND V01 > 0
+            WHERE MAJ_CAT = %s AND COALESCE(V01, 0) > 0
             GROUP BY GEN_ART_NUMBER, CLR
         """, (majcat,))
         cols = [d[0].lower() for d in cur.description]
         rows = cur.fetchall()
         df = pd.DataFrame(rows, columns=cols)
-        logger.info(f"[snowflake] msa_dc_stock({majcat}, V01): {len(df):,} articles, "
+        logger.info(f"[snowflake] msa_dc_stock({majcat}, DC={rdc_code}): {len(df):,} articles, "
                      f"{int(df['dc_stock'].sum()):,} units in {time.time()-t0:.1f}s")
         return df
     finally:
