@@ -19,13 +19,13 @@ class Settings(BaseSettings):
     PORT: int = 8000
 
     # System Database (RBAC, RLS, Audit, Table Metadata)
-    DB_SERVER: str = "HOPC560"
+    DB_SERVER: str = "ars-v2retail-sql.database.windows.net"
     DB_NAME: str = "Claude"
-    DB_USERNAME: str = "sa"
-    DB_PASSWORD: str = "vrl@55555"           # Override via .env in production
+    DB_USERNAME: str = "arsadmin"
+    DB_PASSWORD: str = "ArsStr0ng@Pass2026!"
     DB_DRIVER: str = "ODBC Driver 18 for SQL Server"
-    DB_TRUST_CERT: str = "yes"               # "no" for Azure SQL
-    DB_ENCRYPT: str = "no"                   # "yes" for Azure SQL (mandatory)
+    DB_TRUST_CERT: str = "yes"
+    DB_ENCRYPT: str = "yes"                  # Required for Azure SQL
 
     # Connection pool — tuned for 20+ concurrent planners
     DB_POOL_SIZE: int = 15

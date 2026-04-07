@@ -43,54 +43,63 @@ async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
     logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
 
-    # Check database connection
-    if check_db_connection():
-        logger.info("✅ Database connection successful")
-    else:
-        logger.error("❌ Database connection failed!")
-
-    # Enable RCSI so readers never block during uploads
-    enable_rcsi()
-
-    # Ensure all model tables exist (auto-create new ones)
+    # Check database connection (non-blocking — app starts even if DB is down)
     try:
-        import app.models.rbac  # noqa - register models with Base
-        import app.models.rls   # noqa
-        import app.models.audit # noqa
-        Base.metadata.create_all(bind=system_engine, checkfirst=True)
-        logger.info("System DB tables verified")
+        if check_db_connection():
+            logger.info("Database connection successful")
+        else:
+            logger.warning("Database connection failed — allocation endpoints still work via Snowflake")
     except Exception as e:
-        logger.warning(f"Table auto-create: {e}")
+        logger.warning(f"Database check error: {e}")
 
-    # Create super admin + seed permissions if needed
+    # Enable RCSI (skip if DB unreachable)
     try:
-        from app.services.auth_service import create_super_admin_if_needed, seed_permissions_if_needed
-        db = SessionLocal()
-        try:
-            create_super_admin_if_needed(db)
-            seed_permissions_if_needed(db)
-        finally:
-            db.close()
+        enable_rcsi()
+    except Exception as e:
+        logger.warning(f"RCSI skipped: {e}")
+
+    # Ensure all model tables exist (skip if DB unreachable)
+    try:
+        if system_engine is not None:
+            import app.models.rbac  # noqa
+            import app.models.rls   # noqa
+            import app.models.audit # noqa
+            Base.metadata.create_all(bind=system_engine, checkfirst=True)
+            logger.info("System DB tables verified")
+    except Exception as e:
+        logger.warning(f"Table auto-create skipped: {e}")
+
+    # Create super admin + seed permissions (skip if DB unreachable)
+    try:
+        if system_engine is not None:
+            from app.services.auth_service import create_super_admin_if_needed, seed_permissions_if_needed
+            db = SessionLocal()
+            try:
+                create_super_admin_if_needed(db)
+                seed_permissions_if_needed(db)
+            finally:
+                db.close()
     except Exception as e:
         logger.warning(f"Bootstrap skipped: {e}")
 
-    # Clean up any hanging jobs from previous runs
+    # Clean up any hanging jobs from previous runs (skip if DB unreachable)
     try:
-        from app.models.audit import MSAStorageJob
-        db = SessionLocal()
-        try:
-            hanging_jobs = db.query(MSAStorageJob).filter(
-                MSAStorageJob.status == 'running'
-            ).all()
-            if hanging_jobs:
-                logger.warning(f"Found {len(hanging_jobs)} hanging jobs from previous server run, marking as failed")
-                for job in hanging_jobs:
-                    job.status = 'failed'
-                    job.error_message = 'Job interrupted - server was stopped while job was running'
-                    job.completed_at = datetime.utcnow()
-                db.commit()
-        finally:
-            db.close()
+        if system_engine is not None:
+            from app.models.audit import MSAStorageJob
+            db = SessionLocal()
+            try:
+                hanging_jobs = db.query(MSAStorageJob).filter(
+                    MSAStorageJob.status == 'running'
+                ).all()
+                if hanging_jobs:
+                    logger.warning(f"Found {len(hanging_jobs)} hanging jobs, marking as failed")
+                    for job in hanging_jobs:
+                        job.status = 'failed'
+                        job.error_message = 'Job interrupted - server was stopped while job was running'
+                        job.completed_at = datetime.utcnow()
+                    db.commit()
+            finally:
+                db.close()
     except Exception as e:
         logger.warning(f"Could not clean up hanging jobs: {e}")
 
