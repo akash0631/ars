@@ -100,6 +100,7 @@ def _build_majcat_summary(
     budget_cascade: pd.DataFrame,
     variants: pd.DataFrame,
     duration_s: float,
+    msa_dc_stock: pd.DataFrame = None,
 ) -> Dict[str, Any]:
     """Build comprehensive summary dict for a single MAJCAT run."""
     if assignments.empty:
@@ -123,47 +124,60 @@ def _build_majcat_summary(
         }
 
     total_slots = int(budget_cascade["opt_count"].sum()) if not budget_cascade.empty else 0
-    slots_filled = len(assignments)
 
-    l_art_mask = assignments["art_status"].isin(["L", "L_ONLY"])
-    cont_mask = assignments["art_status"] == "L"
-    mix_mask = ~l_art_mask
+    # Count by status
+    l_count = int((assignments["art_status"] == "L").sum())
+    mix_articles = int((assignments["art_status"] == "MIX").sum())
+    mix_slots = int(assignments[assignments["art_status"] == "MIX"].groupby(["st_cd", "opt_no"]).ngroups) if mix_articles > 0 else 0
+    newl_count = int((assignments["art_status"] == "NEW_L").sum())
 
-    l_art_count = int(l_art_mask.sum())
-    continuation_count = int(cont_mask.sum())
-    mix_count = int(mix_mask.sum())
+    slots_used = l_count + mix_slots + newl_count
+    fill_before = round((l_count + mix_slots) / max(total_slots, 1) * 100, 1)
+    fill_after = round(min(slots_used / max(total_slots, 1) * 100, 100), 1)
 
-    fill_rate = round(slots_filled / total_slots * 100, 1) if total_slots > 0 else 0.0
+    # DC metrics
+    total_dispatch = float(assignments["disp_q"].sum())
+    dc_total_qty = float(msa_dc_stock["dc_stock"].sum()) if msa_dc_stock is not None and not msa_dc_stock.empty else 0
+    dispatched_gacs = set(assignments[assignments["disp_q"] > 0]["gen_art_color"].unique())
+    dc_total_arts = len(msa_dc_stock) if msa_dc_stock is not None and not msa_dc_stock.empty else 0
+    dc_arts_used = len(dispatched_gacs & set(msa_dc_stock["gen_art_color"])) if dc_total_arts > 0 else 0
+
     avg_score = round(float(assignments["total_score"].mean()), 1)
-
     mbq_vals = budget_cascade["mbq"] if not budget_cascade.empty else pd.Series([0])
-    mbq_min = int(mbq_vals.min())
-    mbq_max = int(mbq_vals.max())
-
     stores = int(assignments["st_cd"].nunique())
-    variants_count = len(variants) if not variants.empty else 0
-    total_qty = int(variants["alloc_qty"].sum()) if not variants.empty and "alloc_qty" in variants.columns else 0
-    total_value = 0.0
-    if not variants.empty and "alloc_qty" in variants.columns and "mrp" in variants.columns:
-        total_value = round(float((variants["alloc_qty"] * variants["mrp"]).sum()), 2)
+    total_value = round(float((assignments["disp_q"] * assignments["mrp"]).sum()), 2)
 
     return {
         "majcat": majcat,
         "status": "completed",
         "scored_count": len(scored_pairs),
-        "slots_filled": slots_filled,
-        "l_art_count": l_art_count,
-        "continuation_count": continuation_count,
-        "mix_count": mix_count,
-        "fill_rate": fill_rate,
+        "total_slots": total_slots,
+        "l_count": l_count,
+        "mix_articles": mix_articles,
+        "mix_slots": mix_slots,
+        "newl_count": newl_count,
+        "slots_used": slots_used,
+        "fill_before_dc": fill_before,
+        "fill_after_dc": fill_after,
+        "dc_qty_dispatched": int(total_dispatch),
+        "dc_qty_total": int(dc_total_qty),
+        "dc_arts_used": dc_arts_used,
+        "dc_arts_total": dc_total_arts,
         "avg_score": avg_score,
-        "mbq_min": mbq_min,
-        "mbq_max": mbq_max,
+        "mbq_min": int(mbq_vals.min()),
+        "mbq_max": int(mbq_vals.max()),
         "stores": stores,
-        "variants_count": variants_count,
-        "total_qty": total_qty,
+        "total_dispatch": int(total_dispatch),
         "total_value": total_value,
         "duration_s": duration_s,
+        # Legacy fields for dashboard compat
+        "slots_filled": slots_used,
+        "l_art_count": l_count,
+        "mix_count": mix_articles,
+        "fill_rate": fill_after,
+        "continuation_count": l_count,
+        "variants_count": 0,
+        "total_qty": int(total_dispatch),
     }
 
 
@@ -179,8 +193,8 @@ def _run_single_majcat(majcat: str, rdc_code: str, current_month: int) -> Dict[s
     t0 = time.time()
 
     try:
-        # ── Step 1: Scored pairs from Snowflake ──
-        scored_pairs = sf.get_scored_pairs(majcat, top_n=200)
+        # ── Step 1: Scored pairs from Snowflake (top 500 per store for speed) ──
+        scored_pairs = sf.get_scored_pairs(majcat, top_n=500)
         if scored_pairs.empty:
             return {
                 "summary": {"majcat": majcat, "status": "skipped", "reason": "no scored pairs",
@@ -203,13 +217,17 @@ def _run_single_majcat(majcat: str, rdc_code: str, current_month: int) -> Dict[s
         scored_gacs = scored_pairs["gen_art_color"].unique().tolist()
         store_stock = sf.get_store_stock(scored_gacs, majcat)
 
-        # ── Step 4: Engine 3 — Global Greedy Fill ──
+        # ── Step 4: MSA DC stock (V01) ──
+        msa_dc_stock = sf.get_msa_dc_stock(majcat, rdc_code=rdc_code)
+
+        # ── Step 5: Engine 3 — Global Greedy Fill ──
         filler = GlobalGreedyFiller(DEFAULT_SETTINGS)
         assignments = filler.fill(
             scored_pairs=scored_pairs,
             budget_cascade=budget_cascade,
             majcat=majcat,
             store_stock_gencolor=store_stock,
+            msa_dc_stock=msa_dc_stock,
         )
 
         # ── Step 5: Engine 4 — Size Allocation ──
@@ -241,7 +259,7 @@ def _run_single_majcat(majcat: str, rdc_code: str, current_month: int) -> Dict[s
         duration_s = round(time.time() - t0, 1)
 
         summary = _build_majcat_summary(
-            majcat, scored_pairs, assignments, budget_cascade, variants, duration_s
+            majcat, scored_pairs, assignments, budget_cascade, variants, duration_s, msa_dc_stock
         )
 
         assignments_list = assignments.to_dict(orient="records") if not assignments.empty else []
