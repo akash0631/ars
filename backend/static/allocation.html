@@ -138,6 +138,56 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--tx);min-h
 .page-btn:disabled{opacity:.4;cursor:not-allowed}
 @media(max-width:1200px){.kpi-strip{grid-template-columns:repeat(3,1fr)}.panels{grid-template-columns:1fr}.run-grid{grid-template-columns:1fr 1fr}.weight-grid{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:768px){.kpi-strip{grid-template-columns:repeat(2,1fr)}.run-grid{grid-template-columns:1fr}}
+
+/* ── Review Tab ── */
+.rv-kpi-strip{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:18px}
+.rv-kpi{background:var(--bg2);border:1px solid var(--brd);border-radius:var(--radius-sm);padding:14px 16px;position:relative;overflow:hidden}
+.rv-kpi .rv-k-label{font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px}
+.rv-kpi .rv-k-val{font-size:20px;font-weight:700;font-family:'JetBrains Mono',monospace;letter-spacing:-.5px}
+.rv-kpi .rv-k-sub{font-size:10px;color:var(--tx3);margin-top:2px}
+.rv-kpi.blue .rv-k-val{color:var(--acc2)}.rv-kpi.green .rv-k-val{color:var(--acc-g)}.rv-kpi.yellow .rv-k-val{color:var(--acc-y)}.rv-kpi.purple .rv-k-val{color:var(--acc-p)}.rv-kpi.red .rv-k-val{color:var(--acc-r)}
+.rv-section{margin-bottom:20px}
+.rv-section-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.rv-section-head h3{font-size:14px;font-weight:600}
+.rv-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.rv-toolbar input,.rv-toolbar select{background:var(--bg);border:1px solid var(--brd);color:var(--tx);padding:6px 10px;border-radius:var(--radius-sm);font-size:11px;font-family:'DM Sans',sans-serif;outline:none}
+.rv-toolbar input{min-width:180px}
+.rv-toolbar input:focus{border-color:var(--acc)}
+
+.rv-table-wrap{border:1px solid var(--brd);border-radius:var(--radius-sm);overflow:hidden}
+.rv-table-scroll{max-height:520px;overflow:auto;scrollbar-width:thin;scrollbar-color:var(--brd2) transparent}
+.rv-table{width:100%;border-collapse:collapse;min-width:900px}
+.rv-table th{font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--tx3);padding:8px 10px;text-align:right;border-bottom:2px solid var(--brd);font-weight:600;position:sticky;top:0;background:var(--bg2);cursor:pointer;white-space:nowrap;user-select:none;z-index:2}
+.rv-table th:first-child{text-align:left}
+.rv-table th:hover{color:var(--acc2)}
+.rv-table th .sort-arrow{font-size:8px;margin-left:3px;opacity:.4}
+.rv-table th.sorted-asc .sort-arrow,.rv-table th.sorted-desc .sort-arrow{opacity:1;color:var(--acc2)}
+.rv-table td{padding:6px 10px;font-size:11px;border-bottom:1px solid rgba(226,232,240,.5);font-family:'JetBrains Mono',monospace;text-align:right;white-space:nowrap}
+.rv-table td:first-child{text-align:left;font-weight:600;color:var(--acc2)}
+.rv-table tr:hover td{background:rgba(37,99,235,.03)}
+.rv-table tr.rv-row-even td{background:rgba(241,245,249,.5)}
+.rv-table tr.rv-row-even:hover td{background:rgba(37,99,235,.05)}
+.rv-table .rv-zero{color:var(--tx3);opacity:.5}
+
+.rv-badge{font-size:9px;padding:2px 8px;border-radius:10px;font-weight:600;display:inline-block;text-align:center;letter-spacing:.3px}
+.rv-badge-l{background:rgba(5,150,105,.12);color:#059669;border:1px solid rgba(5,150,105,.25)}
+.rv-badge-mix{background:rgba(217,119,6,.12);color:#d97706;border:1px solid rgba(217,119,6,.25)}
+.rv-badge-newl{background:rgba(124,58,237,.12);color:#7c3aed;border:1px solid rgba(124,58,237,.25)}
+.rv-badge-lonly{background:rgba(37,99,235,.12);color:#2563eb;border:1px solid rgba(37,99,235,.25)}
+
+.rv-expand-btn{background:none;border:none;cursor:pointer;font-size:12px;color:var(--tx3);padding:2px 4px;border-radius:3px;transition:all .15s}
+.rv-expand-btn:hover{background:var(--bg3);color:var(--acc2)}
+.rv-detail-row td{background:rgba(37,99,235,.02)!important;padding:0!important}
+.rv-detail-inner{padding:4px 10px 8px 28px}
+.rv-detail-table{width:100%;border-collapse:collapse}
+.rv-detail-table th{font-size:9px;text-transform:uppercase;letter-spacing:.3px;color:var(--tx3);padding:5px 8px;text-align:right;border-bottom:1px solid var(--brd);font-weight:500;background:transparent;position:static;cursor:default}
+.rv-detail-table th:first-child{text-align:left}
+.rv-detail-table td{padding:4px 8px;font-size:10px;border-bottom:1px solid rgba(226,232,240,.3);font-family:'JetBrains Mono',monospace;text-align:right}
+.rv-detail-table td:first-child{text-align:left}
+.rv-detail-table tr:hover td{background:rgba(37,99,235,.04)}
+
+@media(max-width:1200px){.rv-kpi-strip{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:768px){.rv-kpi-strip{grid-template-columns:repeat(2,1fr)}}
 </style>
 </head>
 <body>
@@ -159,6 +209,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--tx);min-h
   <div class="tab" data-tab="variants" onclick="switchTab('variants')">📦 Variants <span class="cnt" id="variantCount">0</span></div>
   <div class="tab" data-tab="weights" onclick="switchTab('weights')">⚙ Weights</div>
   <div class="tab" data-tab="history" onclick="switchTab('history')">📋 History <span class="cnt" id="historyCount">0</span></div>
+  <div class="tab" data-tab="review" onclick="switchTab('review')">🔍 Review <span class="cnt" id="reviewCount">0</span></div>
 </div>
 <div class="main">
 
@@ -284,6 +335,116 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--tx);min-h
   </div>
 </div>
 
+<!-- TAB: REVIEW -->
+<div class="tab-content" id="tab-review">
+  <div id="reviewEmpty" class="empty-state"><div class="icon">🔍</div><h3>No Review Data</h3><p>Run an allocation first, then switch to this tab for the full Excel-like breakdown.</p></div>
+  <div id="reviewContent" style="display:none">
+
+    <!-- KPI Row 1 -->
+    <div class="rv-kpi-strip" id="rvKpiRow1">
+      <div class="rv-kpi blue"><div class="rv-k-label">Total Slots</div><div class="rv-k-val" id="rvKpiSlots">--</div><div class="rv-k-sub">L + MIX + Empty</div></div>
+      <div class="rv-kpi green"><div class="rv-k-label">L (Store Stock)</div><div class="rv-k-val" id="rvKpiL">--</div><div class="rv-k-sub" id="rvKpiLSub">articles / slots</div></div>
+      <div class="rv-kpi yellow"><div class="rv-k-label">MIX (New from DC)</div><div class="rv-k-val" id="rvKpiMix">--</div><div class="rv-k-sub" id="rvKpiMixSub">articles / slots</div></div>
+      <div class="rv-kpi purple"><div class="rv-k-label">NEW_L</div><div class="rv-k-val" id="rvKpiNewL">--</div><div class="rv-k-sub">new L articles</div></div>
+      <div class="rv-kpi green"><div class="rv-k-label">Fill Before DC</div><div class="rv-k-val" id="rvKpiFillBefore">--</div><div class="rv-k-sub">L-only fill rate</div></div>
+    </div>
+    <div class="rv-kpi-strip" id="rvKpiRow2">
+      <div class="rv-kpi blue"><div class="rv-k-label">Fill After DC</div><div class="rv-k-val" id="rvKpiFillAfter">--</div><div class="rv-k-sub">L + MIX fill rate</div></div>
+      <div class="rv-kpi yellow"><div class="rv-k-label">DC Qty Used / Total</div><div class="rv-k-val" id="rvKpiDcQty">--</div><div class="rv-k-sub" id="rvKpiDcQtySub">units from DC</div></div>
+      <div class="rv-kpi purple"><div class="rv-k-label">DC Articles Used / Total</div><div class="rv-k-val" id="rvKpiDcArt">--</div><div class="rv-k-sub" id="rvKpiDcArtSub">unique articles</div></div>
+      <div class="rv-kpi green"><div class="rv-k-label">Total Dispatch</div><div class="rv-k-val" id="rvKpiDispatch">--</div><div class="rv-k-sub">units</div></div>
+      <div class="rv-kpi blue"><div class="rv-k-label">Total Value</div><div class="rv-k-val" id="rvKpiValue">--</div><div class="rv-k-sub" id="rvKpiValueSub">INR</div></div>
+    </div>
+
+    <!-- Store x MAJCAT Table -->
+    <div class="rv-section">
+      <div class="rv-section-head">
+        <h3>Store Summary</h3>
+        <div class="rv-toolbar">
+          <input type="text" placeholder="Search store..." id="rvStoreFilter" oninput="rvFilterStoreTable()">
+          <button class="btn btn-sm btn-secondary" onclick="rvExportCSV('store')">Export CSV</button>
+        </div>
+      </div>
+      <div class="rv-table-wrap"><div class="rv-table-scroll" style="max-height:480px">
+        <table class="rv-table" id="rvStoreTable">
+          <thead><tr>
+            <th data-col="store" onclick="rvSortStore(this,'store')">Store <span class="sort-arrow">▼</span></th>
+            <th data-col="total_slots" onclick="rvSortStore(this,'total_slots')">Total Slots <span class="sort-arrow">▼</span></th>
+            <th data-col="l_count" onclick="rvSortStore(this,'l_count')">L Count <span class="sort-arrow">▼</span></th>
+            <th data-col="mix_articles" onclick="rvSortStore(this,'mix_articles')">MIX Articles <span class="sort-arrow">▼</span></th>
+            <th data-col="mix_slots" onclick="rvSortStore(this,'mix_slots')">MIX Slots <span class="sort-arrow">▼</span></th>
+            <th data-col="new_l" onclick="rvSortStore(this,'new_l')">NEW_L <span class="sort-arrow">▼</span></th>
+            <th data-col="fill_before" onclick="rvSortStore(this,'fill_before')">Fill Before <span class="sort-arrow">▼</span></th>
+            <th data-col="fill_after" onclick="rvSortStore(this,'fill_after')">Fill After <span class="sort-arrow">▼</span></th>
+            <th data-col="st_stock" onclick="rvSortStore(this,'st_stock')">Store Stock <span class="sort-arrow">▼</span></th>
+            <th data-col="disp_qty" onclick="rvSortStore(this,'disp_qty')">Dispatch Qty <span class="sort-arrow">▼</span></th>
+            <th data-col="short_qty" onclick="rvSortStore(this,'short_qty')">Short Qty <span class="sort-arrow">▼</span></th>
+            <th data-col="empty_slots" onclick="rvSortStore(this,'empty_slots')">Empty Slots <span class="sort-arrow">▼</span></th>
+          </tr></thead>
+          <tbody id="rvStoreBody"></tbody>
+        </table>
+      </div></div>
+    </div>
+
+    <!-- Article Detail Table -->
+    <div class="rv-section">
+      <div class="rv-section-head">
+        <h3>Article-Level Detail</h3>
+        <div class="rv-toolbar">
+          <input type="text" placeholder="Search store or article..." id="rvArticleFilter" oninput="rvFilterArticleTable()">
+          <select id="rvArticleStatusF" onchange="rvFilterArticleTable()"><option value="">All Status</option><option value="L">L</option><option value="MIX">MIX</option><option value="NEW_L">NEW_L</option><option value="L_ONLY">L_ONLY</option></select>
+          <button class="btn btn-sm btn-secondary" onclick="rvExportCSV('article')">Export CSV</button>
+        </div>
+      </div>
+      <div class="rv-table-wrap"><div class="rv-table-scroll" style="max-height:520px">
+        <table class="rv-table" id="rvArticleTable">
+          <thead><tr>
+            <th data-col="st_cd" onclick="rvSortArticle(this,'st_cd')">Store <span class="sort-arrow">▼</span></th>
+            <th data-col="opt_no" onclick="rvSortArticle(this,'opt_no')">Opt# <span class="sort-arrow">▼</span></th>
+            <th data-col="gen_art_color" onclick="rvSortArticle(this,'gen_art_color')" style="text-align:left">Article+Color <span class="sort-arrow">▼</span></th>
+            <th data-col="art_status" onclick="rvSortArticle(this,'art_status')" style="text-align:center">Status <span class="sort-arrow">▼</span></th>
+            <th data-col="total_score" onclick="rvSortArticle(this,'total_score')">Score <span class="sort-arrow">▼</span></th>
+            <th data-col="st_stock" onclick="rvSortArticle(this,'st_stock')">Store Stock <span class="sort-arrow">▼</span></th>
+            <th data-col="mbq" onclick="rvSortArticle(this,'mbq')">MBQ/Opt <span class="sort-arrow">▼</span></th>
+            <th data-col="disp_q" onclick="rvSortArticle(this,'disp_q')">Dispatch Qty <span class="sort-arrow">▼</span></th>
+            <th data-col="dc_stock_before" onclick="rvSortArticle(this,'dc_stock_before')">DC Before <span class="sort-arrow">▼</span></th>
+            <th data-col="dc_stock_after" onclick="rvSortArticle(this,'dc_stock_after')">DC After <span class="sort-arrow">▼</span></th>
+            <th data-col="mrp" onclick="rvSortArticle(this,'mrp')">MRP <span class="sort-arrow">▼</span></th>
+            <th data-col="value" onclick="rvSortArticle(this,'value')">Value <span class="sort-arrow">▼</span></th>
+          </tr></thead>
+          <tbody id="rvArticleBody"></tbody>
+        </table>
+      </div></div>
+      <div class="pagination" id="rvArticlePag"></div>
+    </div>
+
+    <!-- MSA Article Summary -->
+    <div class="rv-section">
+      <div class="rv-section-head">
+        <h3>MSA Article Summary (DC View)</h3>
+        <div class="rv-toolbar">
+          <input type="text" placeholder="Search article..." id="rvMsaFilter" oninput="rvFilterMsaTable()">
+          <button class="btn btn-sm btn-secondary" onclick="rvExportCSV('msa')">Export CSV</button>
+        </div>
+      </div>
+      <div class="rv-table-wrap"><div class="rv-table-scroll" style="max-height:480px">
+        <table class="rv-table" id="rvMsaTable">
+          <thead><tr>
+            <th data-col="article" onclick="rvSortMsa(this,'article')" style="text-align:left">Article+Color <span class="sort-arrow">▼</span></th>
+            <th data-col="dc_total" onclick="rvSortMsa(this,'dc_total')">DC Stock Total <span class="sort-arrow">▼</span></th>
+            <th data-col="dc_dispatched" onclick="rvSortMsa(this,'dc_dispatched')">DC Dispatched <span class="sort-arrow">▼</span></th>
+            <th data-col="dc_remaining" onclick="rvSortMsa(this,'dc_remaining')">DC Remaining <span class="sort-arrow">▼</span></th>
+            <th data-col="stores_count" onclick="rvSortMsa(this,'stores_count')">Stores Allocated <span class="sort-arrow">▼</span></th>
+            <th data-col="avg_score" onclick="rvSortMsa(this,'avg_score')">Avg Score <span class="sort-arrow">▼</span></th>
+          </tr></thead>
+          <tbody id="rvMsaBody"></tbody>
+        </table>
+      </div></div>
+    </div>
+
+  </div>
+</div>
+
 </div>
 
 <script>
@@ -376,6 +537,7 @@ async function loadResults(runId,summary){
   renderStoreDetail(storeRows);
 
   await loadOptions(runId);await loadVariants(runId);
+  loadReviewData(runId);
 }
 
 function renderStoreDetail(rows){
@@ -445,6 +607,293 @@ function checkSources(){document.getElementById('dataSources').innerHTML=[
 ].map(([k,v,c])=>'<div class="setting-row"><span class="key">'+k+'</span><span class="val" style="color:'+c+'">'+v+'</span></div>').join('')}
 
 function exportCSV(type){let data;if(type==='storeDetail'){data=(currentResults.storeDetail||[]).map(([code,s])=>{const filled=(s.l_art_count||0)+(s.mix_count||0);const mbq=s.mbq||0;return{store_code:code,mbq:mbq,l_art:s.l_art_count||0,continuation:s.continuation_count||0,mix:s.mix_count||0,total_filled:filled,fill_rate:mbq>0?(filled/mbq*100).toFixed(1)+'%':'0%',total_qty:s.total_qty||0,total_value:s.total_value||0}})}else{data=type==='options'?currentResults.options:currentResults.variants}if(!data||!data.length)return alert('No data');const ks=Object.keys(data[0]);let csv=ks.join(',')+'\n';data.forEach(r=>{csv+=ks.map(k=>'"'+((r[k]||'').toString().replace(/"/g,'""'))+'"').join(',')+'\n'});const b=new Blob([csv],{type:'text/csv'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='allocation_'+type+'_'+(currentRunId||'export')+'.csv';a.click()}
+
+/* ── Review Tab State & Logic ── */
+let rvAllAssignments=[];  // raw assignment records for current run
+let rvStoreData=[];       // computed store rows
+let rvMsaData=[];         // computed MSA rows
+let rvArticlePage=0;
+const RV_PS=200;
+let rvStoreSortCol='store',rvStoreSortAsc=true;
+let rvArticleSortCol='st_cd',rvArticleSortAsc=true;
+let rvMsaSortCol='dc_dispatched',rvMsaSortAsc=false;
+
+async function loadReviewData(runId){
+  try{
+    // Fetch ALL assignments (no pagination — get everything)
+    let all=[];let offset=0;const batchSize=2000;
+    while(true){
+      const d=await apiFetch(API+'/results/'+runId+'/assignments?limit='+batchSize+'&offset='+offset);
+      const page=d.data||[];
+      all=all.concat(page);
+      if(page.length<batchSize||all.length>=(d.total||0))break;
+      offset+=batchSize;
+    }
+    rvAllAssignments=all;
+    document.getElementById('reviewCount').textContent=all.length.toLocaleString();
+    if(all.length>0){
+      document.getElementById('reviewEmpty').style.display='none';
+      document.getElementById('reviewContent').style.display='block';
+      rvComputeAll();
+    }
+  }catch(e){console.error('Review load error:',e)}
+}
+
+function rvComputeAll(){
+  const asgn=rvAllAssignments;
+  if(!asgn.length)return;
+
+  // ── Compute Store Summary ──
+  const storeMap={};
+  asgn.forEach(r=>{
+    const s=r.st_cd||'?';
+    if(!storeMap[s])storeMap[s]={store:s,total_slots:0,l_count:0,mix_articles:0,mix_slots:0,new_l:0,fill_before:0,fill_after:0,st_stock:0,disp_qty:0,short_qty:0,empty_slots:0,_mbq:r.mbq||0,_arts:new Set()};
+    const m=storeMap[s];
+    m.total_slots=Math.max(m.total_slots,r.mbq||m._mbq);
+    m._mbq=Math.max(m._mbq,r.mbq||0);
+    const status=(r.art_status||'').toUpperCase();
+    if(status==='L'||status==='L_ONLY'){m.l_count++;m.fill_before++}
+    else if(status==='NEW_L'){m.new_l++}
+    else{m.mix_slots++;m._arts.add(r.gen_art_color)}
+    m.st_stock+=(r.st_stock||0);
+    m.disp_qty+=(r.disp_q||0);
+  });
+  Object.values(storeMap).forEach(m=>{
+    m.mix_articles=m._arts.size;
+    m.total_slots=Math.max(m.total_slots,m._mbq);
+    const filled=m.l_count+m.mix_slots+m.new_l;
+    m.fill_after=m.total_slots>0?Math.round(filled/m.total_slots*100):0;
+    m.fill_before=m.total_slots>0?Math.round(m.l_count/m.total_slots*100):0;
+    m.empty_slots=Math.max(0,m.total_slots-filled);
+    m.short_qty=Math.max(0,m.total_slots-filled);
+    delete m._arts;delete m._mbq;
+  });
+  rvStoreData=Object.values(storeMap);
+
+  // ── Compute MSA Summary ──
+  const msaMap={};
+  asgn.forEach(r=>{
+    const a=r.gen_art_color||'?';
+    if(!msaMap[a])msaMap[a]={article:a,dc_total:0,dc_dispatched:0,dc_remaining:0,stores_count:0,avg_score:0,_scores:[],_stores:new Set()};
+    const m=msaMap[a];
+    m.dc_total=Math.max(m.dc_total,r.dc_stock_before||0);
+    m.dc_dispatched+=(r.disp_q||0);
+    m._scores.push(r.total_score||0);
+    m._stores.add(r.st_cd);
+  });
+  Object.values(msaMap).forEach(m=>{
+    m.stores_count=m._stores.size;
+    m.avg_score=m._scores.length>0?Math.round(m._scores.reduce((a,b)=>a+b,0)/m._scores.length*10)/10:0;
+    m.dc_remaining=Math.max(0,m.dc_total-m.dc_dispatched);
+    delete m._scores;delete m._stores;
+  });
+  rvMsaData=Object.values(msaMap);
+
+  // ── KPIs ──
+  const totalSlots=rvStoreData.reduce((a,s)=>a+s.total_slots,0);
+  const totalL=rvStoreData.reduce((a,s)=>a+s.l_count,0);
+  const totalMixSlots=rvStoreData.reduce((a,s)=>a+s.mix_slots,0);
+  const totalMixArts=new Set(asgn.filter(r=>{const s=(r.art_status||'').toUpperCase();return s!=='L'&&s!=='L_ONLY'&&s!=='NEW_L'}).map(r=>r.gen_art_color)).size;
+  const totalNewL=rvStoreData.reduce((a,s)=>a+s.new_l,0);
+  const totalDisp=asgn.reduce((a,r)=>a+(r.disp_q||0),0);
+  const totalValue=asgn.reduce((a,r)=>a+(r.disp_q||0)*(r.mrp||0),0);
+  const totalFilled=totalL+totalMixSlots+totalNewL;
+  const fillBefore=totalSlots>0?Math.round(totalL/totalSlots*100):0;
+  const fillAfter=totalSlots>0?Math.round(totalFilled/totalSlots*100):0;
+
+  const dcQtyUsed=totalDisp;
+  const dcQtyTotal=rvMsaData.reduce((a,m)=>a+m.dc_total,0);
+  const dcArtUsed=rvMsaData.filter(m=>m.dc_dispatched>0).length;
+  const dcArtTotal=rvMsaData.length;
+
+  document.getElementById('rvKpiSlots').textContent=totalSlots.toLocaleString();
+  document.getElementById('rvKpiL').textContent=totalL.toLocaleString();
+  document.getElementById('rvKpiLSub').textContent=totalL+' articles / '+totalL+' slots';
+  document.getElementById('rvKpiMix').textContent=totalMixSlots.toLocaleString();
+  document.getElementById('rvKpiMixSub').textContent=totalMixArts+' articles / '+totalMixSlots+' slots';
+  document.getElementById('rvKpiNewL').textContent=totalNewL.toLocaleString();
+  document.getElementById('rvKpiFillBefore').textContent=fillBefore+'%';
+  document.getElementById('rvKpiFillAfter').textContent=fillAfter+'%';
+  document.getElementById('rvKpiDcQty').textContent=dcQtyUsed.toLocaleString()+' / '+dcQtyTotal.toLocaleString();
+  document.getElementById('rvKpiDcQtySub').textContent=dcQtyTotal>0?Math.round(dcQtyUsed/dcQtyTotal*100)+'% utilised':'--';
+  document.getElementById('rvKpiDcArt').textContent=dcArtUsed.toLocaleString()+' / '+dcArtTotal.toLocaleString();
+  document.getElementById('rvKpiDcArtSub').textContent=dcArtTotal>0?Math.round(dcArtUsed/dcArtTotal*100)+'% coverage':'--';
+  document.getElementById('rvKpiDispatch').textContent=totalDisp.toLocaleString();
+  const vStr=totalValue>=10000000?'Rs '+(totalValue/10000000).toFixed(1)+'Cr':totalValue>=100000?'Rs '+(totalValue/100000).toFixed(1)+'L':'Rs '+totalValue.toLocaleString();
+  document.getElementById('rvKpiValue').textContent=vStr;
+  document.getElementById('rvKpiValueSub').textContent='Rs '+totalValue.toLocaleString();
+
+  // Render tables
+  rvRenderStoreTable();
+  rvArticlePage=0;
+  rvRenderArticleTable();
+  rvRenderMsaTable();
+}
+
+function rvFmt(v){return v===0||v===null||v===undefined?'<span class="rv-zero">0</span>':v.toLocaleString()}
+function rvPct(v){
+  if(v>=90)return'<span style="color:var(--acc-g);font-weight:600">'+v+'%</span>';
+  if(v>=50)return'<span style="color:var(--acc-y);font-weight:600">'+v+'%</span>';
+  return'<span style="color:var(--acc-r);font-weight:600">'+v+'%</span>';
+}
+function rvStatusBadge(s){
+  const u=(s||'').toUpperCase();
+  if(u==='L')return'<span class="rv-badge rv-badge-l">L</span>';
+  if(u==='L_ONLY')return'<span class="rv-badge rv-badge-lonly">L_ONLY</span>';
+  if(u==='NEW_L')return'<span class="rv-badge rv-badge-newl">NEW_L</span>';
+  return'<span class="rv-badge rv-badge-mix">MIX</span>';
+}
+
+/* ── Store Table ── */
+function rvRenderStoreTable(){
+  const q=(document.getElementById('rvStoreFilter').value||'').toLowerCase();
+  let data=rvStoreData;
+  if(q)data=data.filter(s=>s.store.toLowerCase().includes(q));
+  data=rvSortData(data,rvStoreSortCol,rvStoreSortAsc);
+  const body=document.getElementById('rvStoreBody');
+  body.innerHTML=data.map((s,i)=>
+    '<tr class="'+(i%2===0?'':'rv-row-even')+'">'+
+    '<td>'+s.store+'</td>'+
+    '<td>'+rvFmt(s.total_slots)+'</td>'+
+    '<td>'+rvFmt(s.l_count)+'</td>'+
+    '<td>'+rvFmt(s.mix_articles)+'</td>'+
+    '<td>'+rvFmt(s.mix_slots)+'</td>'+
+    '<td>'+rvFmt(s.new_l)+'</td>'+
+    '<td>'+rvPct(s.fill_before)+'</td>'+
+    '<td>'+rvPct(s.fill_after)+'</td>'+
+    '<td>'+rvFmt(s.st_stock)+'</td>'+
+    '<td>'+rvFmt(s.disp_qty)+'</td>'+
+    '<td>'+rvFmt(s.short_qty)+'</td>'+
+    '<td>'+rvFmt(s.empty_slots)+'</td>'+
+    '</tr>'
+  ).join('');
+}
+function rvFilterStoreTable(){rvRenderStoreTable()}
+function rvSortStore(th,col){
+  if(rvStoreSortCol===col)rvStoreSortAsc=!rvStoreSortAsc;
+  else{rvStoreSortCol=col;rvStoreSortAsc=col==='store'}
+  rvUpdateSortUI(th);
+  rvRenderStoreTable();
+}
+
+/* ── Article Table (paginated) ── */
+function rvGetFilteredArticles(){
+  const q=(document.getElementById('rvArticleFilter').value||'').toLowerCase();
+  const sf=document.getElementById('rvArticleStatusF').value;
+  let data=rvAllAssignments;
+  if(q)data=data.filter(r=>(r.st_cd||'').toLowerCase().includes(q)||(r.gen_art_color||'').toLowerCase().includes(q));
+  if(sf)data=data.filter(r=>(r.art_status||'').toUpperCase()===sf.toUpperCase());
+  return rvSortData(data,rvArticleSortCol,rvArticleSortAsc,true);
+}
+function rvRenderArticleTable(){
+  const data=rvGetFilteredArticles();
+  const total=data.length;
+  const start=rvArticlePage*RV_PS;
+  const page=data.slice(start,start+RV_PS);
+  const body=document.getElementById('rvArticleBody');
+  body.innerHTML=page.map((r,i)=>{
+    const val=(r.disp_q||0)*(r.mrp||0);
+    return'<tr class="'+(i%2===0?'':'rv-row-even')+'">'+
+    '<td>'+r.st_cd+'</td>'+
+    '<td>'+(r.opt_no||'')+'</td>'+
+    '<td style="text-align:left">'+(r.gen_art_color||'')+'</td>'+
+    '<td style="text-align:center">'+rvStatusBadge(r.art_status)+'</td>'+
+    '<td><span class="badge badge-score">'+(r.total_score||0)+'</span></td>'+
+    '<td>'+rvFmt(r.st_stock||0)+'</td>'+
+    '<td>'+rvFmt(r.mbq||0)+'</td>'+
+    '<td style="font-weight:700;color:var(--acc-g)">'+rvFmt(r.disp_q||0)+'</td>'+
+    '<td>'+rvFmt(r.dc_stock_before||0)+'</td>'+
+    '<td>'+rvFmt(r.dc_stock_after||0)+'</td>'+
+    '<td>Rs '+(r.mrp||0).toLocaleString()+'</td>'+
+    '<td>Rs '+val.toLocaleString()+'</td>'+
+    '</tr>';
+  }).join('');
+  // Pagination
+  const tp=Math.ceil(total/RV_PS);
+  const pagEl=document.getElementById('rvArticlePag');
+  if(tp<=1){pagEl.innerHTML='<span class="page-info">'+total.toLocaleString()+' rows</span>';return}
+  pagEl.innerHTML='<span class="page-info">Page '+(rvArticlePage+1)+' of '+tp+' ('+total.toLocaleString()+' rows)</span>'+
+    '<div class="page-btns">'+
+    '<button class="page-btn" '+(rvArticlePage===0?'disabled':'')+' onclick="rvArticlePage--;rvRenderArticleTable()">Prev</button>'+
+    '<button class="page-btn" '+(rvArticlePage>=tp-1?'disabled':'')+' onclick="rvArticlePage++;rvRenderArticleTable()">Next</button>'+
+    '</div>';
+}
+function rvFilterArticleTable(){rvArticlePage=0;rvRenderArticleTable()}
+function rvSortArticle(th,col){
+  if(rvArticleSortCol===col)rvArticleSortAsc=!rvArticleSortAsc;
+  else{rvArticleSortCol=col;rvArticleSortAsc=(col==='st_cd'||col==='gen_art_color')}
+  rvUpdateSortUI(th);
+  rvArticlePage=0;
+  rvRenderArticleTable();
+}
+
+/* ── MSA Table ── */
+function rvRenderMsaTable(){
+  const q=(document.getElementById('rvMsaFilter').value||'').toLowerCase();
+  let data=rvMsaData;
+  if(q)data=data.filter(m=>m.article.toLowerCase().includes(q));
+  data=rvSortData(data,rvMsaSortCol,rvMsaSortAsc);
+  const body=document.getElementById('rvMsaBody');
+  body.innerHTML=data.map((m,i)=>
+    '<tr class="'+(i%2===0?'':'rv-row-even')+'">'+
+    '<td>'+m.article+'</td>'+
+    '<td>'+rvFmt(m.dc_total)+'</td>'+
+    '<td style="font-weight:700;color:var(--acc-g)">'+rvFmt(m.dc_dispatched)+'</td>'+
+    '<td>'+rvFmt(m.dc_remaining)+'</td>'+
+    '<td>'+rvFmt(m.stores_count)+'</td>'+
+    '<td><span class="badge badge-score">'+m.avg_score+'</span></td>'+
+    '</tr>'
+  ).join('');
+}
+function rvFilterMsaTable(){rvRenderMsaTable()}
+function rvSortMsa(th,col){
+  if(rvMsaSortCol===col)rvMsaSortAsc=!rvMsaSortAsc;
+  else{rvMsaSortCol=col;rvMsaSortAsc=(col==='article')}
+  rvUpdateSortUI(th);
+  rvRenderMsaTable();
+}
+
+/* ── Sort helpers ── */
+function rvSortData(data,col,asc,isArticle){
+  return[...data].sort((a,b)=>{
+    let va=a[col],vb=b[col];
+    if(typeof va==='string')va=(va||'').toLowerCase();
+    if(typeof vb==='string')vb=(vb||'').toLowerCase();
+    if(va<vb)return asc?-1:1;
+    if(va>vb)return asc?1:-1;
+    return 0;
+  });
+}
+function rvUpdateSortUI(th){
+  const table=th.closest('table');
+  const wasAsc=th.classList.contains('sorted-asc');
+  table.querySelectorAll('th').forEach(h=>{h.classList.remove('sorted-asc','sorted-desc')});
+  th.classList.add(wasAsc?'sorted-desc':'sorted-asc');
+}
+
+/* ── CSV Export ── */
+function rvExportCSV(type){
+  let data,filename;
+  if(type==='store'){
+    data=rvStoreData;filename='review_store_summary';
+  }else if(type==='article'){
+    data=rvGetFilteredArticles().map(r=>({
+      store:r.st_cd,opt_no:r.opt_no,article:r.gen_art_color,status:r.art_status,
+      score:r.total_score,store_stock:r.st_stock,mbq:r.mbq,dispatch_qty:r.disp_q,
+      dc_before:r.dc_stock_before,dc_after:r.dc_stock_after,mrp:r.mrp,
+      value:(r.disp_q||0)*(r.mrp||0)
+    }));filename='review_article_detail';
+  }else if(type==='msa'){
+    data=rvMsaData;filename='review_msa_summary';
+  }else return;
+  if(!data||!data.length)return alert('No data to export');
+  const ks=Object.keys(data[0]);
+  let csv=ks.join(',')+'\n';
+  data.forEach(r=>{csv+=ks.map(k=>'"'+String(r[k]||'').replace(/"/g,'""')+'"').join(',')+'\n'});
+  const blob=new Blob([csv],{type:'text/csv'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download=filename+'_'+(currentRunId||'export')+'.csv';a.click();
+}
 
 async function init(){await login();loadMajcats();checkSources()}
 init();
