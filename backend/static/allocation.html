@@ -259,7 +259,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--tx);min-h
   <div id="resultsContent" style="display:none">
     <div class="kpi-strip">
       <div class="kpi green"><div class="kpi-glow"></div><div class="kpi-label">L-ART %</div><div class="kpi-value" id="kpiLart">—</div><div class="kpi-sub" id="kpiLartSub">articles already in store</div></div>
-      <div class="kpi yellow"><div class="kpi-glow"></div><div class="kpi-label">MIX %</div><div class="kpi-value" id="kpiMix">—</div><div class="kpi-sub" id="kpiMixSub">new articles from DC</div></div>
+      <div class="kpi yellow"><div class="kpi-glow"></div><div class="kpi-label">MIX %</div><div class="kpi-value" id="kpiMix">—</div><div class="kpi-sub" id="kpiMixSub">dying articles</div></div>
       <div class="kpi green"><div class="kpi-glow"></div><div class="kpi-label">Fill Rate</div><div class="kpi-value" id="kpiFill">—</div><div class="kpi-sub" id="kpiFillSub">option slots used</div></div>
       <div class="kpi blue"><div class="kpi-glow"></div><div class="kpi-label">Total Stores</div><div class="kpi-value" id="kpiStores">—</div><div class="kpi-sub" id="kpiStoresSub">active stores</div></div>
       <div class="kpi purple"><div class="kpi-glow"></div><div class="kpi-label">Total Qty</div><div class="kpi-value" id="kpiTotalQty">—</div><div class="kpi-sub" id="kpiTotalQtySub">units allocated</div></div>
@@ -619,14 +619,15 @@ async function loadResults(runId, summary) {
   var pmVals = Object.values(pm);
   for (var vi = 0; vi < pmVals.length; vi++) {
     var m = pmVals[vi];
-    tLart += m.l_art_count || 0;
-    tMix += m.mix_count || 0;
-    tSlots += m.slots_filled || 0;
+    tLart += m.l_count || m.l_art_count || 0;
+    tMix += m.mix_articles || m.mix_count || 0;
+    tSlots += m.total_slots || m.slots_filled || m.slots_used || 0;
     tStores += m.stores || 0;
-    tQty += m.total_qty || 0;
+    tQty += m.total_qty || m.dc_qty_dispatched || 0;
     tValue += m.total_value || 0;
-    tVariants += m.variants_allocated || 0;
-    if (m.fill_rate_avg != null) { frSum += m.fill_rate_avg; frCount++; }
+    tVariants += m.variants_count || m.variants_allocated || 0;
+    var mFr = m.fill_after_dc != null ? m.fill_after_dc : (m.fill_rate != null ? m.fill_rate : (m.fill_rate_avg != null ? m.fill_rate_avg : null));
+    if (mFr != null) { frSum += mFr; frCount++; }
   }
   var totalFilled = tLart + tMix;
   var lartPct = totalFilled > 0 ? (tLart / totalFilled * 100).toFixed(1) : '0';
@@ -656,7 +657,7 @@ async function loadResults(runId, summary) {
   for (var ri = 0; ri < pmEntries.length; ri++) {
     var mc = pmEntries[ri][0];
     var dd = pmEntries[ri][1];
-    var fr = dd.fill_rate_avg != null ? dd.fill_rate_avg : 0;
+    var fr = dd.fill_after_dc != null ? dd.fill_after_dc : (dd.fill_rate_avg != null ? dd.fill_rate_avg : (dd.fill_rate || 0));
     var frCls = '';
     if (fr > 90) frCls = 'background:rgba(5,150,105,.1);color:var(--acc-g);border:1px solid rgba(5,150,105,.2)';
     else if (fr >= 50) frCls = 'background:rgba(217,119,6,.1);color:var(--acc-y);border:1px solid rgba(217,119,6,.2)';
@@ -666,16 +667,16 @@ async function loadResults(runId, summary) {
     rows += '<tr><td style="font-weight:600;color:var(--acc2)">' + mc + '</td>';
     rows += '<td>' + (dd.stores || 0).toLocaleString() + '</td>';
     rows += '<td>' + (dd.mbq_min || 0) + '-' + (dd.mbq_max || 0) + '</td>';
-    rows += '<td>' + (dd.articles_scored || 0).toLocaleString() + '</td>';
-    rows += '<td>' + (dd.l_art_count || 0).toLocaleString() + '</td>';
+    rows += '<td>' + (dd.scored_count || dd.articles_scored || 0).toLocaleString() + '</td>';
+    rows += '<td>' + (dd.l_count || dd.l_art_count || 0).toLocaleString() + '</td>';
     rows += '<td>' + (dd.continuation_count || 0).toLocaleString() + '</td>';
-    rows += '<td>' + (dd.mix_count || 0).toLocaleString() + '</td>';
-    rows += '<td>' + (dd.slots_filled || 0).toLocaleString() + '</td>';
+    rows += '<td>' + (dd.mix_articles || dd.mix_count || 0).toLocaleString() + '</td>';
+    rows += '<td>' + (dd.total_slots || dd.slots_filled || dd.slots_used || 0).toLocaleString() + '</td>';
     rows += '<td><span class="badge" style="' + frCls + '">' + fr.toFixed(1) + '%</span></td>';
-    rows += '<td>' + (dd.variants_allocated || 0).toLocaleString() + '</td>';
-    rows += '<td>' + (dd.total_qty || 0).toLocaleString() + '</td>';
+    rows += '<td>' + (dd.variants_count || dd.variants_allocated || 0).toLocaleString() + '</td>';
+    rows += '<td>' + (dd.total_qty || dd.dc_qty_dispatched || 0).toLocaleString() + '</td>';
     rows += '<td>' + valStr + '</td>';
-    rows += '<td>' + ((dd.duration_ms || 0) / 1000).toFixed(1) + 's</td></tr>';
+    rows += '<td>' + (dd.duration_s != null ? dd.duration_s.toFixed(1) : ((dd.duration_ms || 0) / 1000).toFixed(1)) + 's</td></tr>';
   }
   tb.innerHTML = rows;
 
@@ -1006,20 +1007,31 @@ function renderPag(id, total, page, fnName) {
 
 /* ── Weights / Config ── */
 async function loadWeights() {
+  /* Hardcoded fallback weights matching Snowflake scoring factors */
+  var defaultWeights = {
+    'ST_SPECIFIC': 9999, 'NATIONAL_HERO': 100, 'CORE_FOCUS': 60, 'ASSORTED': 30,
+    'SEG': 30, 'MACRO_MVGR': 25, 'VENDOR': 20, 'MRP_RANGE': 15, 'FABRIC': 10,
+    'COLOR': 10, 'SEASON': 10, 'NECK': 5, 'MVGR1': 15, 'GP_PSF': 10
+  };
   try {
     var r = await fetch(API + '/config');
+    if (!r.ok) throw new Error('Config endpoint returned ' + r.status);
     var d = await r.json();
     var cfg = d.data || {};
     var weights = cfg.weights || [];
     var settings = cfg.settings || [];
-    var whtml = '';
-    for (var i = 0; i < weights.length; i++) {
-      var w = weights[i];
-      var label = w.setting_key.replace('weight_', '').replace(/_/g, ' ').toUpperCase();
-      whtml += '<div class="weight-item"><label>' + label + '</label>';
-      whtml += '<input type="number" id="w_' + w.setting_key + '" value="' + w.setting_value + '" min="0" max="100"></div>';
+    if (weights.length > 0) {
+      var whtml = '';
+      for (var i = 0; i < weights.length; i++) {
+        var w = weights[i];
+        var label = w.setting_key.replace('weight_', '').replace(/_/g, ' ').toUpperCase();
+        whtml += '<div class="weight-item"><label>' + label + '</label>';
+        whtml += '<input type="number" id="w_' + w.setting_key + '" value="' + w.setting_value + '" min="0" max="10000"></div>';
+      }
+      document.getElementById('weightGrid').innerHTML = whtml;
+    } else {
+      throw new Error('No weights returned from API');
     }
-    document.getElementById('weightGrid').innerHTML = whtml;
     var shtml = '';
     for (var j = 0; j < settings.length; j++) {
       var s = settings[j];
@@ -1030,7 +1042,15 @@ async function loadWeights() {
     }
     document.getElementById('settingsGrid').innerHTML = shtml;
   } catch (e) {
-    console.error(e);
+    console.warn('Config API unavailable, using hardcoded weights:', e.message);
+    var whtml = '';
+    var dKeys = Object.keys(defaultWeights);
+    for (var k = 0; k < dKeys.length; k++) {
+      whtml += '<div class="weight-item"><label>' + dKeys[k] + '</label>';
+      whtml += '<input type="number" id="w_weight_' + dKeys[k].toLowerCase() + '" value="' + defaultWeights[dKeys[k]] + '" min="0" max="10000"></div>';
+    }
+    document.getElementById('weightGrid').innerHTML = whtml;
+    document.getElementById('settingsGrid').innerHTML = '<div class="setting-row"><span class="key">source</span><span class="val" style="color:var(--acc-y)">Hardcoded defaults (API unavailable)</span></div>';
   }
 }
 
@@ -1063,14 +1083,15 @@ async function loadHistory() {
     for (var i = 0; i < runs.length; i++) {
       var run = runs[i];
       var sc = run.status === 'completed' ? 'completed' : run.status === 'running' ? 'running' : 'failed';
+      var majcatsStr = Array.isArray(run.majcats) ? run.majcats.join(', ') : (run.majcats || '--');
       html += '<tr>';
       html += '<td style="font-family:JetBrains Mono,monospace;font-size:11px">' + (run.run_id || '').substring(0, 12) + '...</td>';
-      html += '<td>' + (run.majcats || []).join(', ') + '</td>';
+      html += '<td>' + majcatsStr + '</td>';
       html += '<td><span class="badge badge-' + sc + '">' + (run.status || '') + '</span></td>';
-      html += '<td>' + (run.total_articles_scored || 0).toLocaleString() + '</td>';
-      html += '<td>' + (run.total_slots_filled || 0).toLocaleString() + '</td>';
-      html += '<td>' + (run.total_variants_allocated || 0).toLocaleString() + '</td>';
-      html += '<td>' + ((run.duration_ms || 0) / 1000).toFixed(1) + 's</td>';
+      html += '<td>' + (run.assignments_count || run.total_articles_scored || 0).toLocaleString() + '</td>';
+      html += '<td>' + (run.total || run.total_slots_filled || 0).toLocaleString() + '</td>';
+      html += '<td>' + (run.variants_count || run.total_variants_allocated || 0).toLocaleString() + '</td>';
+      html += '<td>' + (run.duration_s != null ? run.duration_s.toFixed(1) : run.duration_ms != null ? (run.duration_ms / 1000).toFixed(1) : '0') + 's</td>';
       html += '<td style="font-size:11px;color:var(--tx3)">' + (run.created_at ? new Date(run.created_at).toLocaleString() : '') + '</td>';
       html += '<td><button class="btn btn-sm btn-secondary" onclick="viewRun(\'' + run.run_id + '\')">View</button></td>';
       html += '</tr>';
@@ -1239,7 +1260,7 @@ function rvComputeAll() {
     sm.fill_after = sm.total_slots > 0 ? Math.round(filled / sm.total_slots * 100) : 0;
     sm.fill_before = sm.total_slots > 0 ? Math.round((sm.l_count + sm.mix_slots) / sm.total_slots * 100) : 0;
     sm.empty_slots = 0; /* All assigned slots are filled by definition */
-    sm.short_qty = Math.max(0, Math.round(sm.mbq_total - sm.store_stock - sm.disp_qty));
+    sm.short_qty = Math.max(0, Math.round((sm.mbq_total || 0) - (sm.st_stock || 0) - (sm.disp_qty || 0)));
     delete sm._arts;
     delete sm._mbq;
     delete sm._mbq_total;

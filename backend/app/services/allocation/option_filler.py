@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class StoreSlots:
-    """Tracks option slot state for a single store-segment."""
+    """Tracks option slot state for a single store (one pool per store)."""
     st_cd: str
     majcat: str
     seg: str
@@ -151,7 +151,8 @@ class GlobalGreedyFiller:
             scored_lookup[row['gen_art_color']] = row.to_dict()
 
         # -- Initialize slot trackers from budget cascade --
-        slot_map: Dict[str, StoreSlots] = {}      # "st_cd|seg" -> StoreSlots
+        # ONE pool per STORE: total_slots = SUM(opt_count) across all segments
+        slot_map: Dict[str, StoreSlots] = {}      # st_cd -> StoreSlots
         store_total_opts: Dict[str, int] = {}      # st_cd -> total option count
         store_mbq: Dict[str, float] = {}           # st_cd -> MBQ (total)
         for _, row in budget_cascade.iterrows():
@@ -160,10 +161,12 @@ class GlobalGreedyFiller:
             opt_count = int(row.get('opt_count', 0))
             mbq_val = float(row.get('mbq', 0) or 0)
             if opt_count > 0:
-                key = f"{st}|{seg}"
-                slot_map[key] = StoreSlots(
-                    st_cd=st, majcat=majcat, seg=seg, total_slots=opt_count
-                )
+                key = st  # ONE pool per store
+                if key not in slot_map:
+                    slot_map[key] = StoreSlots(
+                        st_cd=st, majcat=majcat, seg='ALL', total_slots=0
+                    )
+                slot_map[key].total_slots += opt_count  # Accumulate across segments
                 store_total_opts[st] = store_total_opts.get(st, 0) + opt_count
                 store_mbq[st] = max(store_mbq.get(st, 0), mbq_val)
 
@@ -235,18 +238,16 @@ class GlobalGreedyFiller:
 
             store_filled_arts.setdefault(st_cd, set())
 
-            # Find slot(s) for this store
-            store_slot_keys = [k for k, v in slot_map.items() if v.st_cd == st_cd]
+            # Find slot pool for this store (single entry keyed by st_cd)
+            store_pool = slot_map.get(st_cd)
+            if store_pool is None:
+                continue
 
             # Step A: Assign L articles (1 per slot, >= 90% MBQ)
             for gac, score, st_stock, info in l_articles:
                 if not store_has_space(st_cd):
                     break
-                target_slots = None
-                for sk in store_slot_keys:
-                    if not slot_map[sk].is_full:
-                        target_slots = slot_map[sk]; break
-                if target_slots is None:
+                if store_pool.is_full:
                     break
 
                 if gac in store_filled_arts[st_cd]:
@@ -257,8 +258,8 @@ class GlobalGreedyFiller:
                     continue
 
                 assignments.append({
-                    'st_cd': st_cd, 'majcat': majcat, 'seg': target_slots.seg,
-                    'opt_no': target_slots.filled_slots + 1,
+                    'st_cd': st_cd, 'majcat': majcat, 'seg': store_pool.seg,
+                    'opt_no': store_pool.filled_slots + 1,
                     'gen_art_color': gac, 'gen_art': gen_art,
                     'color': info['color'] if info else '',
                     'total_score': score, 'art_status': 'L', 'is_multi_opt': 0,
@@ -267,7 +268,7 @@ class GlobalGreedyFiller:
                     'bgt_sales_per_day': 0, 'dc_stock_before': 0, 'dc_stock_after': 0,
                     'st_stock': st_stock,
                 })
-                target_slots.filled_slots += 1
+                store_pool.filled_slots += 1
                 use_store_slot(st_cd)
                 store_filled_arts[st_cd].add(gac)
                 store_art_colors[color_key] = store_art_colors.get(color_key, 0) + 1
@@ -275,7 +276,7 @@ class GlobalGreedyFiller:
 
             # Step B: Bundle MIX articles into REMAINING slots
             remaining_slots_count = min(
-                sum(1 for sk in store_slot_keys if not slot_map[sk].is_full),
+                store_pool.remaining,
                 store_total_opts.get(st_cd, 0) - store_slots_used.get(st_cd, 0)
             )
             if remaining_slots_count > 0 and mbq_opt > 0:
@@ -291,10 +292,7 @@ class GlobalGreedyFiller:
                     if current_mix_slot is None or mix_cumulative_qty >= mbq_opt:
                         if mix_slots_used >= remaining_slots_count or not store_has_space(st_cd):
                             break  # No more slots for MIX
-                        current_mix_slot = None
-                        for sk in store_slot_keys:
-                            if not slot_map[sk].is_full:
-                                current_mix_slot = slot_map[sk]; break
+                        current_mix_slot = store_pool if not store_pool.is_full else None
                         if current_mix_slot is None:
                             break
                         mix_cumulative_qty = 0
@@ -384,7 +382,9 @@ class GlobalGreedyFiller:
             # Reset slot counts for affected stores and recount
             affected_stores = set(assignments[i]['st_cd'] for i in converted_indices)
             for st_cd in affected_stores:
-                st_slot_keys = [k for k, v in slot_map.items() if v.st_cd == st_cd]
+                pool = slot_map.get(st_cd)
+                if pool is None:
+                    continue
                 # Recount: L articles (including conversions) each take 1 slot
                 st_assignments = [(i, a) for i, a in enumerate(assignments) if a['st_cd'] == st_cd]
                 l_count = sum(1 for _, a in st_assignments if a['art_status'] == 'L')
@@ -400,16 +400,11 @@ class GlobalGreedyFiller:
                         mix_cum = 0
                     mix_cum += a['st_stock']
 
-                total_store_slots = sum(slot_map[k].total_slots for k in st_slot_keys)
-                new_filled = min(l_count + mix_slot_count, total_store_slots)  # NEVER exceed budget
+                new_filled = min(l_count + mix_slot_count, pool.total_slots)  # NEVER exceed budget
 
                 # Reset slot_map AND store_slots_used for this store
                 store_slots_used[st_cd] = new_filled
-                remaining_to_fill = new_filled
-                for sk in st_slot_keys:
-                    cap = slot_map[sk].total_slots
-                    slot_map[sk].filled_slots = min(remaining_to_fill, cap)
-                    remaining_to_fill = max(0, remaining_to_fill - cap)
+                pool.filled_slots = new_filled
 
         # Step B: Top up L articles that are below MBQ
         l_assignments = [
@@ -633,8 +628,8 @@ class GlobalGreedyFiller:
                     if not store_has_space(st_cd):
                         continue
 
-                    st_slot_keys = [k for k, v in slot_map.items() if v.st_cd == st_cd and not v.is_full]
-                    if not st_slot_keys:
+                    pool = slot_map.get(st_cd)
+                    if pool is None or pool.is_full:
                         continue
 
                     store_filled_arts.setdefault(st_cd, set())
@@ -643,8 +638,8 @@ class GlobalGreedyFiller:
                     if (st_cd, gac) in store_stock_map:
                         continue
 
-                    # Find an open slot
-                    target = slot_map[st_slot_keys[0]]
+                    # Use the store's single pool
+                    target = pool
                     dc_before = dc_stock_tracker.get(gac, 0)
                     mbq_opt_val = mbq_per_opt(st_cd)
                     actual_disp = min(round(mbq_opt_val), dc_before)
@@ -738,11 +733,11 @@ class GlobalGreedyFiller:
 
         # Renumber opt_no: L and NEW_L get unique numbers, MIX articles share slot numbers
         result = result.sort_values(
-            ['st_cd', 'seg', 'art_status', 'total_score'],
-            ascending=[True, True, True, False]
+            ['st_cd', 'art_status', 'total_score'],
+            ascending=[True, True, False]
         )
         new_opt_nos = []
-        for (st_cd, seg), grp in result.groupby(['st_cd', 'seg'], sort=False):
+        for st_cd, grp in result.groupby('st_cd', sort=False):
             opt = 0
             mbq_opt_val = mbq_per_opt(st_cd)
             mix_cum = 0
