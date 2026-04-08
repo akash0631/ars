@@ -139,3 +139,89 @@ backend/
 
 ## FULL HANDOVER DOCUMENT
 See: V2_RETAIL_HANDOVER.md in this repo (465 lines, complete data inventory, all credentials, 7 agent tasks)
+
+
+---
+
+## V2 RETAIL — ABAP AI STUDIO & HHT PLATFORM
+
+### ABAP AI Studio
+- **URL:** https://abap.v2retail.net (Cloudflare Worker: abap-ai-studio)
+- **Login:** akash/admin2026 (admin), bhavesh/developer
+- **GitHub:** akash0631/abap-ai-studio (main=prod, dev=dev)
+- **Features:** AI Chat, 8-Stage Agent Pipeline, Smart Debug, RFC Developer, HHT Studio, Code Search
+- **D1 Database:** 43487dc8-c72c-42fc-a901-efafab7b5dd9
+
+### SAP RFC Proxy
+- **URL:** https://sap-api.v2retail.net/api/rfc/proxy
+- **Header:** X-RFC-Key: v2-rfc-proxy-2026
+- **Env routing:** ?env=prod (PROD SAP), ?env=qa (QA SAP), default=DEV
+- **SAP Systems:** DEV=192.168.144.174/210, PROD=192.168.144.170/600, QA=192.168.144.179/600
+
+### HHT Android App
+- **APK:** v12.103 at apk.v2retail.net/download (R2 v2retail bucket)
+- **GitHub:** akash0631/v2-android-hht (main branch)
+- **Server dropdown:** V2 Cloud (PROD) | Dev Cloud (hht-api.v2retail.net/dev) | QA Cloud (/qa)
+- **CRITICAL:** Old Tomcat URLs (192.168.151.40:16080/xmwgw) incompatible with v12 JSON format. ALWAYS use cloud proxy URLs.
+- **Azure Middleware:** v2-hht-api.azurewebsites.net/api/hht (PROD only)
+
+### Pipeline Rules (from incidents)
+1. ALWAYS read PROD source FIRST via RPY_PROGRAM_READ before generating code
+2. ALWAYS test FM after deploying (call with blank params, check SYNTAX_ERROR)
+3. If SYNTAX_ERROR detected, auto-restore PROD code immediately
+4. V2 naming: IM_ (import), EX_ (export). NEVER IV_/EV_
+5. NEVER rewrite more than 50% of an FM. Optimize FROM existing code
+6. NEVER remove global variables (GT_*, GS_*)
+7. NEVER change error message text
+8. FM name != FG name. Check TFDIR.PNAME for include name
+
+### Verified SAP Z-Tables
+ZWM_USR02 (user-plant), ZWM_DC_MASTER (DC config), ZWM_CRATE (crate-bin), ZWM_DCSTK1/2/3 (stock take), ZWM_GRT_PUTWAY (GRT putaway), ZSDC_FLRMSTR (floor master), ZSDC_ART_STATUS (article status), ZDISC_ARTL (discount articles)
+
+### Incident History
+1. AI invented IV_CRATE_NUMBER param and ZWM_CRATES table -> SYNTAX_ERROR dump
+2. AI rewrote ZSDC_DIRECT_ART_VAL_BARCOD_RFC 148/167 lines, removed GT_DATA2 -> SYNTAX_ERROR (x2)
+3. HHT IM_STOCK_TAKE_ID copy-paste bug sent USER instead of stock_take_id
+4. v12 JSON to old Tomcat middleware -> parse error -> fixed with cloud proxy
+
+### All GitHub Repos (akash0631)
+| Repo | Purpose |
+|------|---------|
+| abap-ai-studio | ABAP AI Development Studio (CF Worker) |
+| rfc-api | IIS .NET RFC API (148 controllers) |
+| v2-android-hht | HHT Android App (Zebra devices) |
+| v2-hht-middleware | Azure HHT Middleware (NCo tunnel to SAP) |
+| ars | Auto Replenishment System |
+
+### Build Rules (CRITICAL)
+1. NEVER use regex for HTML_B64 replacement in ABAP Studio build — use string find/replace
+2. Frontend SYS constant MUST use backticks. After SYS must come "const TEMPLATES=["
+3. CF Worker deploy filename must be index.js
+4. HHT APK uploads to R2 v2retail bucket (not nubo, not eatnubo)
+5. SAP FM name != FG name — ALWAYS check TFDIR.PNAME
+
+### Universal MCP Server
+- **URL:** https://universal-mcp.akash-bab.workers.dev
+- **Key:** ArsV2Mcp@22cab54c1bee24fa6893906c
+- **Tools:** 36 total covering ARS, HHT, SQL, RFC, ABAP, Azure, Cloudflare, Nubo, GitHub
+- **ABAP tools:** abap_read_source, abap_read_interface, abap_test_fm, abap_studio_status
+```json
+Claude Desktop: %APPDATA%\Claude\claude_desktop_config.json
+{
+  "mcpServers": {
+    "v2": {
+      "url": "https://universal-mcp.akash-bab.workers.dev",
+      "headers": { "X-API-Key": "ArsV2Mcp@22cab54c1bee24fa6893906c" }
+    }
+  }
+}
+
+Claude Code:
+claude mcp add v2 --transport http --header "X-API-Key: ArsV2Mcp@22cab54c1bee24fa6893906c" https://universal-mcp.akash-bab.workers.dev
+```
+
+### Developer Claude.ai Setup
+1. Settings -> Enable "Code Execution and File Creation"
+2. Settings -> Integrations -> Connect Cloudflare Developer Platform
+3. Projects -> Create "V2 Retail" -> Upload V2_COMPLETE_HANDOVER.md + DEVELOPER_CLAUDE_SETUP.md
+4. Set Project Instructions with API endpoints + rules (see DEVELOPER_CLAUDE_SETUP.md)
