@@ -344,7 +344,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--tx);min-h
     <div class="rv-kpi-strip" id="rvKpiRow1">
       <div class="rv-kpi blue"><div class="rv-k-label">Total Slots</div><div class="rv-k-val" id="rvKpiSlots">--</div><div class="rv-k-sub">L + MIX + Empty</div></div>
       <div class="rv-kpi green"><div class="rv-k-label">L (Store Stock)</div><div class="rv-k-val" id="rvKpiL">--</div><div class="rv-k-sub" id="rvKpiLSub">articles / slots</div></div>
-      <div class="rv-kpi yellow"><div class="rv-k-label">MIX (New from DC)</div><div class="rv-k-val" id="rvKpiMix">--</div><div class="rv-k-sub" id="rvKpiMixSub">articles / slots</div></div>
+      <div class="rv-kpi yellow"><div class="rv-k-label">MIX (Dying Articles)</div><div class="rv-k-val" id="rvKpiMix">--</div><div class="rv-k-sub" id="rvKpiMixSub">articles / slots</div></div>
       <div class="rv-kpi purple"><div class="rv-k-label">NEW_L</div><div class="rv-k-val" id="rvKpiNewL">--</div><div class="rv-k-sub">new L articles</div></div>
       <div class="rv-kpi green"><div class="rv-k-label">Fill Before DC</div><div class="rv-k-val" id="rvKpiFillBefore">--</div><div class="rv-k-sub">L-only fill rate</div></div>
     </div>
@@ -637,7 +637,7 @@ async function loadResults(runId, summary) {
   document.getElementById('kpiLart').textContent = lartPct + '%';
   document.getElementById('kpiLartSub').textContent = tLart.toLocaleString() + ' of ' + totalFilled.toLocaleString() + ' slots';
   document.getElementById('kpiMix').textContent = mixPct + '%';
-  document.getElementById('kpiMixSub').textContent = tMix.toLocaleString() + ' new from DC';
+  document.getElementById('kpiMixSub').textContent = tMix.toLocaleString() + ' dying articles';
   document.getElementById('kpiFill').textContent = avgFr + '%';
   document.getElementById('kpiFillSub').textContent = 'avg across categories';
   document.getElementById('kpiStores').textContent = uniqueStores.toLocaleString();
@@ -1212,7 +1212,9 @@ function rvComputeAll() {
       };
     }
     var m = storeMap[s];
-    m.total_slots = Math.max(m.total_slots, r.mbq || m._mbq);
+    /* total_slots = count unique opt_no for L/NEW_L + unique opt_no for MIX */
+    /* mbq_total carries the store total MBQ if available */
+    if (r.mbq_total) m._mbq_total = Math.max(m._mbq_total || 0, r.mbq_total);
     m._mbq = Math.max(m._mbq, r.mbq || 0);
     var status = (r.art_status || '').toUpperCase();
     if (status === 'L' || status === 'L_ONLY') { m.l_count++; m.fill_before++; }
@@ -1225,14 +1227,18 @@ function rvComputeAll() {
   for (var si = 0; si < storeKeys.length; si++) {
     var sm = storeMap[storeKeys[si]];
     sm.mix_articles = Object.keys(sm._arts).length;
-    sm.total_slots = Math.max(sm.total_slots, sm._mbq);
+    /* total_slots = L slots + MIX slots + NEW_L slots (the actual assigned count) */
+    sm.total_slots = sm.l_count + sm.mix_slots + sm.new_l;
+    /* Also store the MBQ total for qty comparison */
+    sm.mbq_total = sm._mbq_total || sm._mbq || 0;
     var filled = sm.l_count + sm.mix_slots + sm.new_l;
     sm.fill_after = sm.total_slots > 0 ? Math.round(filled / sm.total_slots * 100) : 0;
-    sm.fill_before = sm.total_slots > 0 ? Math.round(sm.l_count / sm.total_slots * 100) : 0;
-    sm.empty_slots = Math.max(0, sm.total_slots - filled);
-    sm.short_qty = Math.max(0, sm.total_slots - filled);
+    sm.fill_before = sm.total_slots > 0 ? Math.round((sm.l_count + sm.mix_slots) / sm.total_slots * 100) : 0;
+    sm.empty_slots = 0; /* All assigned slots are filled by definition */
+    sm.short_qty = Math.max(0, Math.round(sm.mbq_total - sm.store_stock - sm.disp_qty));
     delete sm._arts;
     delete sm._mbq;
+    delete sm._mbq_total;
   }
   rvStoreData = Object.values(storeMap);
 
