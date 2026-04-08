@@ -230,31 +230,11 @@ def _run_single_majcat(majcat: str, rdc_code: str, current_month: int) -> Dict[s
             msa_dc_stock=msa_dc_stock,
         )
 
-        # ── Step 5: Engine 4 — Size Allocation ──
+        # ── Step 6: Engine 4 — Size Allocation (new: uses CONT_SZ + MSA size stock) ──
         variants = pd.DataFrame()
         if not assignments.empty:
-            assigned_gacs = assignments["gen_art_color"].unique().tolist()
-            dc_variant_stock = sf.get_dc_variant_stock(assigned_gacs, majcat)
-
-            # Rename sloc column to match what SizeAllocator expects if present
-            # dc_variant_stock columns: gen_art_color, sloc, sz, stock_qty, mrp
-            # SizeAllocator expects: gen_art_color, var_art, sz, stock_qty
-            if not dc_variant_stock.empty and "sloc" in dc_variant_stock.columns:
-                # Create var_art from gen_art_color + sz (or use sloc as identifier)
-                dc_variant_stock["var_art"] = (
-                    dc_variant_stock["gen_art_color"] + "_" + dc_variant_stock["sz"].astype(str)
-                )
-
-            bgt_size = _fetch_bgt_size(majcat)
-
-            size_alloc = SizeAllocator(DEFAULT_SETTINGS)
-            variants = size_alloc.allocate(
-                option_assignments=assignments,
-                dc_variant_stock=dc_variant_stock,
-                bgt_size=bgt_size,
-                store_stock=store_stock,  # gencolor-level, SizeAllocator handles gracefully
-                majcat=majcat,
-            )
+            from app.services.allocation.size_allocator import allocate_sizes
+            variants = allocate_sizes(assignments, majcat)
 
         duration_s = round(time.time() - t0, 1)
 
