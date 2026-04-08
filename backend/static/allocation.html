@@ -459,7 +459,7 @@ async function apiFetch(url,opts={}){opts.headers=hdr();let r=await fetch(url,op
 
 function switchTab(t){document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('active',e.dataset.tab===t));document.querySelectorAll('.tab-content').forEach(c=>c.classList.toggle('active',c.id==='tab-'+t));if(t==='history')loadHistory();if(t==='weights')loadWeights()}
 
-async function loadMajcats(){try{const d=await apiFetch(API+'/majcats');allMajcats=d.data||[];renderDD(allMajcats)}catch(e){console.error(e)}}
+async function loadMajcats(){try{const r=await fetch(API+'/majcats');const d=await r.json();allMajcats=d.data||d||[];if(Array.isArray(allMajcats)){renderDD(allMajcats);console.log('Loaded '+allMajcats.length+' MAJCATs')}else{console.error('Unexpected majcats response',d)}}catch(e){console.error('loadMajcats error:',e)}}
 function renderDD(items){document.getElementById('majcatDD').innerHTML=items.map(m=>'<div class="dropdown-item '+(selectedMajcats.includes(m)?'selected':'')+'" onclick="toggleMC(\''+m+'\')"><span class="ck">'+(selectedMajcats.includes(m)?'✓':'')+'</span>'+m+'</div>').join('')}
 function showDD(){document.getElementById('majcatDD').classList.add('show')}
 function filterMajcats(){const q=document.getElementById('majcatSearch').value.toLowerCase();renderDD(allMajcats.filter(m=>m.toLowerCase().includes(q)));showDD()}
@@ -477,14 +477,19 @@ async function runAllocation(){
   try{
     const payload={majcats:selectedMajcats,rdc_code:document.getElementById('rdcCode').value||'DH24',current_month:parseInt(document.getElementById('runMonth').value)};
     pf.style.width='60%';
-    const d=await apiFetch(API+'/run',{method:'POST',body:JSON.stringify(payload)});
+    const r=await fetch(API+'/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const d=await r.json();
     pf.style.width='100%';
-    if(d.data&&d.data.run_id){
-      currentRunId=d.data.run_id;st.className='run-status success';
-      st.textContent='✅ Completed in '+(d.data.duration_ms/1000).toFixed(1)+'s — Run: '+currentRunId;
-      animPipe('done');document.getElementById('pipelineTime').textContent=(d.data.duration_ms/1000).toFixed(1)+'s';
-      await loadResults(currentRunId,d.data);switchTab('results');
-    }else{st.className='run-status error';st.textContent='❌ '+(d.detail||d.error||'Error');animPipe('')}
+    if(d.success||d.run_id){
+      currentRunId=d.run_id||'run';
+      const dur=d.summary?.duration_s||d.data?.[0]?.duration_s||0;
+      st.className='run-status success';
+      st.textContent='✅ Completed in '+dur.toFixed(1)+'s — Run: '+currentRunId;
+      animPipe('done');document.getElementById('pipelineTime').textContent=dur.toFixed(1)+'s';
+      // Build per_majcat from data array
+      const pm={};(d.data||[]).forEach(m=>{pm[m.majcat]=m});
+      await loadResults(currentRunId,{per_majcat:pm,duration_ms:dur*1000,total_stores:Object.values(pm).reduce((a,m)=>Math.max(a,m.stores||0),0)});
+      switchTab('results');
+    }else{st.className='run-status error';st.textContent='❌ '+(d.detail||d.message||d.error||JSON.stringify(d).substring(0,100));animPipe('')}
   }catch(e){st.className='run-status error';st.textContent='❌ '+e.message;animPipe('')}
   btn.disabled=false;btn.innerHTML='▶ Run Allocation';setTimeout(()=>pb.classList.remove('active'),2000);
 }
@@ -557,7 +562,7 @@ function filterStoreDetail(){
 }
 
 async function loadOptions(runId,page=0){
-  try{const d=await apiFetch(API+'/results/'+runId+'/assignments?limit='+PS+'&offset='+(page*PS));
+  try{const d=await (await fetch(API+'/results/'+runId+'/assignments?limit='+PS+'&offset='+(page*PS))).json();
   currentResults.options=d.data||[];document.getElementById('optionTotal').textContent=d.total||currentResults.options.length;
   renderOpt(currentResults.options);renderScoreChart(currentResults.options);buildOptFilters(currentResults.options);
   renderPag('optionPag',d.total||0,page,p=>'loadOptions("'+runId+'",'+p+')')}catch(e){console.error(e)}
@@ -567,7 +572,7 @@ function buildOptFilters(data){const mcs=[...new Set(data.map(r=>r.majcat))].sor
 function filterOpt(){const q=document.getElementById('optionFilter').value.toLowerCase();const mc=document.getElementById('optionMajcatF').value;const st=document.getElementById('optionStoreF').value;renderOpt(currentResults.options.filter(r=>(!q||(r.st_cd||'').toLowerCase().includes(q)||(r.gen_art_color||'').toLowerCase().includes(q))&&(!mc||r.majcat===mc)&&(!st||r.st_cd===st)))}
 
 async function loadVariants(runId,page=0){
-  try{const d=await apiFetch(API+'/results/'+runId+'/variants?limit='+PS+'&offset='+(page*PS));
+  try{const d=await (await fetch(API+'/results/'+runId+'/variants?limit='+PS+'&offset='+(page*PS))).json();
   currentResults.variants=d.data||[];document.getElementById('variantTotal').textContent=d.total||currentResults.variants.length;
   document.getElementById('variantCount').textContent=(d.total||currentResults.variants.length).toLocaleString();
   renderVar(currentResults.variants);renderSizeBreakdown(currentResults.variants);buildVarFilters(currentResults.variants);buildStoreCards(currentResults.variants);
@@ -590,14 +595,14 @@ function filterStores(){const q=document.getElementById('storeSearch').value.toL
 
 function renderPag(id,total,page,cbStr){const tp=Math.ceil(total/PS);if(tp<=1){document.getElementById(id).innerHTML='';return}document.getElementById(id).innerHTML='<span class="page-info">Page '+(page+1)+' of '+tp+' ('+total.toLocaleString()+' rows)</span><div class="page-btns"><button class="page-btn" '+(page===0?'disabled':'')+' onclick="'+cbStr.replace(')','').replace(/"/g,"'")+")\"'>← Prev</button><button class=\"page-btn\" '+(page>=tp-1?'disabled':'')+' onclick=\"'+cbStr.replace(')','').replace(/"/g,"'")+")\"'>Next →</button></div>'}
 
-async function loadWeights(){try{const d=await apiFetch(API+'/config');const cfg=d.data||{};const weights=cfg.weights||[];const settings=cfg.settings||[];
+async function loadWeights(){try{const d=await (await fetch(API+'/config')).json();const cfg=d.data||{};const weights=cfg.weights||[];const settings=cfg.settings||[];
 document.getElementById('weightGrid').innerHTML=weights.map(w=>'<div class="weight-item"><label>'+w.setting_key.replace('weight_','').replace(/_/g,' ').toUpperCase()+'</label><input type="number" id="w_'+w.setting_key+'" value="'+w.setting_value+'" min="0" max="100"></div>').join('');
 document.getElementById('settingsGrid').innerHTML=settings.filter(s=>!s.setting_key.startsWith('weight_')).map(s=>'<div class="setting-row"><span class="key">'+s.setting_key+'</span><span class="val">'+(s.setting_value||'').substring(0,50)+'</span></div>').join('')}catch(e){console.error(e)}}
-async function saveWeights(){const inputs=document.querySelectorAll('#weightGrid input');const w={};inputs.forEach(i=>{w[i.id.replace('w_','')]=parseInt(i.value)});try{await apiFetch(API+'/config',{method:'PUT',body:JSON.stringify({weights:w})});alert('Weights saved!')}catch(e){alert('Error: '+e.message)}}
+async function saveWeights(){const inputs=document.querySelectorAll('#weightGrid input');const w={};inputs.forEach(i=>{w[i.id.replace('w_','')]=parseInt(i.value)});try{await fetch(API+'/config',{method:'PUT',body:JSON.stringify({weights:w})});alert('Weights saved!')}catch(e){alert('Error: '+e.message)}}
 
-async function loadHistory(){try{const d=await apiFetch(API+'/runs?limit=50');const runs=d.data||[];document.getElementById('historyCount').textContent=runs.length;
+async function loadHistory(){try{const d=await (await fetch(API+'/runs?limit=50')).json();const runs=d.data||[];document.getElementById('historyCount').textContent=runs.length;
 document.querySelector('#historyTable tbody').innerHTML=runs.map(r=>{const sc=r.art_status==='completed'?'completed':r.art_status==='running'?'running':'failed';return'<tr><td style="font-family:JetBrains Mono,monospace;font-size:11px">'+(r.run_id||'').substring(0,12)+'...</td><td>'+(r.majcats||[]).join(', ')+'</td><td><span class="badge badge-'+sc+'">'+(r.art_status||'')+'</span></td><td>'+(r.total_articles_scored||0).toLocaleString()+'</td><td>'+(r.total_slots_filled||0).toLocaleString()+'</td><td>'+(r.total_variants_allocated||0).toLocaleString()+'</td><td>'+((r.duration_ms||0)/1000).toFixed(1)+'s</td><td style="font-size:11px;color:var(--tx3)">'+(r.created_at?new Date(r.created_at).toLocaleString():'')+'</td><td><button class="btn btn-sm btn-secondary" onclick="viewRun(\''+r.run_id+'\')">View</button></td></tr>'}).join('')}catch(e){console.error(e)}}
-async function viewRun(runId){currentRunId=runId;try{const d=await apiFetch(API+'/runs/'+runId);if(d.data){await loadResults(runId,d.data);switchTab('results')}}catch(e){await loadResults(runId,{per_majcat:{},duration_ms:0});switchTab('results')}}
+async function viewRun(runId){currentRunId=runId;try{const d=await (await fetch(API+'/runs/'+runId)).json();if(d.data){await loadResults(runId,d.data);switchTab('results')}}catch(e){await loadResults(runId,{per_majcat:{},duration_ms:0});switchTab('results')}}
 
 function checkSources(){document.getElementById('dataSources').innerHTML=[
   ['Azure SQL','● Connected','var(--acc-g)'],['Articles','ALLOCATION_MRDC_RAW_DATA','var(--tx)'],
@@ -623,7 +628,7 @@ async function loadReviewData(runId){
     // Fetch ALL assignments (no pagination — get everything)
     let all=[];let offset=0;const batchSize=2000;
     while(true){
-      const d=await apiFetch(API+'/results/'+runId+'/assignments?limit='+batchSize+'&offset='+offset);
+      const d=await (await fetch(API+'/results/'+runId+'/assignments?limit='+batchSize+'&offset='+offset)).json();
       const page=d.data||[];
       all=all.concat(page);
       if(page.length<batchSize||all.length>=(d.total||0))break;
@@ -895,7 +900,7 @@ function rvExportCSV(type){
   a.download=filename+'_'+(currentRunId||'export')+'.csv';a.click();
 }
 
-async function init(){await login();loadMajcats();checkSources()}
+async function init(){login().catch(()=>{});loadMajcats();checkSources()}
 init();
 </script>
 </body>
