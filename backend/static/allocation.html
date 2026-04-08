@@ -593,7 +593,18 @@ if(sorted.length>0){document.getElementById('storesEmpty').style.display='none';
 if(variants.length>0){document.getElementById('variantsEmpty').style.display='none';document.getElementById('variantsContent').style.display='block'}}
 function filterStores(){const q=document.getElementById('storeSearch').value.toLowerCase();document.querySelectorAll('.store-card').forEach(c=>{c.style.display=c.querySelector('.code').textContent.toLowerCase().includes(q)?'':'none'})}
 
-function renderPag(id,total,page,cbStr){const tp=Math.ceil(total/PS);if(tp<=1){document.getElementById(id).innerHTML='';return}document.getElementById(id).innerHTML='<span class="page-info">Page '+(page+1)+' of '+tp+' ('+total.toLocaleString()+' rows)</span><div class="page-btns"><button class="page-btn" '+(page===0?'disabled':'')+' onclick="'+cbStr.replace(')','').replace(/"/g,"'")+")\"'>← Prev</button><button class=\"page-btn\" '+(page>=tp-1?'disabled':'')+' onclick=\"'+cbStr.replace(')','').replace(/"/g,"'")+")\"'>Next →</button></div>'}
+function renderPag(id,total,page,cbStr){
+  const tp=Math.ceil(total/PS);
+  if(tp<=1){document.getElementById(id).innerHTML='';return}
+  const prevCb=cbStr.replace(/\d+\)$/,Math.max(0,page-1)+')');
+  const nextCb=cbStr.replace(/\d+\)$/,Math.min(tp-1,page+1)+')');
+  document.getElementById(id).innerHTML=
+    '<span class="page-info">Page '+(page+1)+' of '+tp+' ('+total.toLocaleString()+' rows)</span>'+
+    '<div class="page-btns">'+
+    '<button class="page-btn" '+(page===0?'disabled':'')+' onclick="'+prevCb+'">Prev</button>'+
+    '<button class="page-btn" '+(page>=tp-1?'disabled':'')+' onclick="'+nextCb+'">Next</button>'+
+    '</div>';
+}
 
 async function loadWeights(){try{const d=await (await fetch(API+'/config')).json();const cfg=d.data||{};const weights=cfg.weights||[];const settings=cfg.settings||[];
 document.getElementById('weightGrid').innerHTML=weights.map(w=>'<div class="weight-item"><label>'+w.setting_key.replace('weight_','').replace(/_/g,' ').toUpperCase()+'</label><input type="number" id="w_'+w.setting_key+'" value="'+w.setting_value+'" min="0" max="100"></div>').join('');
