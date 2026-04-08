@@ -188,7 +188,7 @@ def _run_single_majcat(majcat: str, rdc_code: str, current_month: int) -> Dict[s
     """
     from app.services.allocation import snowflake_loader as sf
     from app.services.allocation.option_filler import GlobalGreedyFiller
-    from app.services.allocation.size_allocator import SizeAllocator
+    # Size allocator imported in step 6 below
 
     t0 = time.time()
 
