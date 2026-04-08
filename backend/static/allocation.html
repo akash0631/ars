@@ -198,7 +198,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--tx);min-h
   </div>
   <div class="header-right">
     <span class="hbadge live">● Connected</span>
-    <span class="hbadge supa" onclick="checkSources()">Supabase</span>
+    <span class="hbadge supa" onclick="checkSources()">Snowflake</span>
     <span class="hbadge api" onclick="window.open('/docs','_blank')">API Docs</span>
   </div>
 </div>
@@ -1094,22 +1094,28 @@ async function viewRun(runId) {
 
 /* ── Data Sources ── */
 function checkSources() {
-  var sources = [
-    ['Azure SQL', 'Connected', 'var(--acc-g)'],
-    ['Articles', 'ALLOCATION_MRDC_RAW_DATA', 'var(--tx)'],
-    ['Budget Source', 'Supabase (387K rows)', 'var(--acc-g)'],
-    ['DC Stock', 'Supabase (49.5M units)', 'var(--acc-g)'],
-    ['Size Contribution', 'Supabase (1,512 rows)', 'var(--acc-g)'],
-    ['Fixture Density', 'Supabase (558 MAJCATs)', 'var(--acc-g)'],
-    ['Hero/Focus', 'Not loaded (optional)', 'var(--tx3)'],
-    ['Store Specific', 'Not loaded (optional)', 'var(--tx3)']
-  ];
-  var html = '';
-  for (var i = 0; i < sources.length; i++) {
-    html += '<div class="setting-row"><span class="key">' + sources[i][0] + '</span>';
-    html += '<span class="val" style="color:' + sources[i][2] + '">' + sources[i][1] + '</span></div>';
-  }
-  document.getElementById('dataSources').innerHTML = html;
+  /* Fetch live Snowflake stats */
+  fetch(API + '/snowflake/test').then(function(r){return r.json()}).then(function(d) {
+    var sf = d.data || {};
+    var sources = [
+      ['Snowflake', sf.status === 'connected' ? 'Connected' : 'Disconnected', sf.status === 'connected' ? 'var(--acc-g)' : 'var(--acc-r)'],
+      ['Article Scores', (sf.article_scores || 0).toLocaleString() + ' scored pairs', 'var(--acc-g)'],
+      ['Store Stock', (sf.store_stock || 0).toLocaleString() + ' rows (FACT_STOCK_GENCOLOR)', 'var(--acc-g)'],
+      ['MAJCATs', (sf.majcats || 0) + ' categories scored', 'var(--acc-g)'],
+      ['Budget Cascade', 'SCORING.BUDGET_CASCADE (236 MAJCATs)', 'var(--acc-g)'],
+      ['MSA DC Stock', 'MSA_ARTICLES V01 (560K rows)', 'var(--acc-g)'],
+      ['Size Contribution', 'CONT_SZ store-specific (996K rows)', 'var(--acc-g)'],
+      ['Scoring', 'COMPUTE_SCORES_V2 with 6 CONT tables', 'var(--acc-g)']
+    ];
+    var html = '';
+    for (var i = 0; i < sources.length; i++) {
+      html += '<div class="setting-row"><span class="key">' + sources[i][0] + '</span>';
+      html += '<span class="val" style="color:' + sources[i][2] + '">' + sources[i][1] + '</span></div>';
+    }
+    document.getElementById('dataSources').innerHTML = html;
+  }).catch(function(e) {
+    document.getElementById('dataSources').innerHTML = '<div class="setting-row"><span class="key">Snowflake</span><span class="val" style="color:var(--acc-r)">Connection failed</span></div>';
+  });
 }
 
 /* ── CSV Export ── */
