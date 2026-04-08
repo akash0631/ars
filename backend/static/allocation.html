@@ -766,7 +766,7 @@ function renderOpt(data) {
     html += '<td><span class="badge" style="' + stCls + '">' + st + '</span></td>';
     html += '<td>' + (r.mbq || 0) + '</td>';
     html += '<td>' + (r.dc_stock_before || 0).toLocaleString() + '</td>';
-    html += '<td>' + (r.store_stock || 0).toLocaleString() + '</td>';
+    html += '<td>' + (r.st_stock || 0).toLocaleString() + '</td>';
     html += '<td>' + fr + '</td>';
     html += '</tr>';
   }
@@ -819,7 +819,7 @@ async function loadVariants(runId, page) {
     renderVar(currentResults.variants);
     renderSizeBreakdown(currentResults.variants);
     buildVarFilters(currentResults.variants);
-    buildStoreCards(currentResults.variants);
+    buildStoreCards(currentResults.options.length > 0 ? currentResults.options : currentResults.variants);
     renderPag('variantPag', d.total || 0, page, 'loadVariants');
   } catch (e) {
     console.error(e);
@@ -927,15 +927,19 @@ function renderSizeBreakdown(data) {
 }
 
 /* ── Store Cards ── */
-function buildStoreCards(variants) {
+function buildStoreCards(items) {
   var stores = {};
-  for (var i = 0; i < variants.length; i++) {
-    var v = variants[i];
+  for (var i = 0; i < items.length; i++) {
+    var v = items[i];
     var s = v.st_cd || '?';
-    if (!stores[s]) stores[s] = { options: {}, totalQty: 0, sizes: {}, mbq: v.mbq || 0 };
-    stores[s].options[v.gen_art_color] = 1;
-    stores[s].totalQty += v.alloc_qty || 0;
-    stores[s].sizes[v.sz] = 1;
+    if (!stores[s]) stores[s] = { options: {}, totalQty: 0, sizes: {}, mbq: v.mbq || 0, l: 0, mix: 0, newl: 0, stStock: 0 };
+    stores[s].options[v.gen_art_color || v.var_art] = 1;
+    stores[s].totalQty += v.alloc_qty || v.disp_q || 0;
+    if (v.sz) stores[s].sizes[v.sz] = 1;
+    if (v.art_status === 'L') stores[s].l++;
+    else if (v.art_status === 'MIX') stores[s].mix++;
+    else if (v.art_status === 'NEW_L') stores[s].newl++;
+    stores[s].stStock += (v.st_stock || 0);
   }
   var sorted = Object.entries(stores).sort(function(a, b) { return b[1].totalQty - a[1].totalQty; });
   var html = '';
