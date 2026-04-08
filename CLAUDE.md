@@ -137,6 +137,47 @@ backend/
 └── requirements.txt           # NEEDS snowflake-connector-python
 ```
 
+
+## CURRENT BUILD STATUS (as of April 8, 2026)
+
+### ✅ DONE
+- snowflake_loader.py: Direct Snowflake connection with LAZY IMPORT (line 32: `import snowflake.connector` inside `_get_connection()`, NOT at module level — this prevents Azure cold-start crash)
+- option_filler.py: L-ART waterfall implemented as GlobalGreedyFiller (392 lines). Has Phase 1 (L-ART, status='L'/'L_ONLY'), Phase 2 (Continuation), Phase 3 (MIX). Status labels: L, L_ONLY, ST_SPEC, HERO, FOCUS, MIX
+- allocation_engine.py: 8 API endpoints, all read from Snowflake directly (no Azure SQL dependency for scoring)
+- M_JEANS test PASSED: 91K scored pairs, 35K store stock, 428 stores, 10,912 assignments (80.8% L-ART + 19.2% MIX), 100% fill rate
+- Budget cascade dedup: 6x duplicates removed, synthetic seg column added
+- Size contribution from Supabase: sz32=26%, sz34=24%, sz30=21%, sz36=12%, sz28=11%
+- Pushed to akash0631/ars (commit bbe41ea)
+- MCP server updated with full allocation engine context (70 lines)
+
+### ⚠️ IMPORTANT: DO NOT USE THE OLD SYSTEM
+- article_scorer.py is a DUPLICATE of Snowflake scoring — DO NOT use it, DELETE it
+- budget_cascade.py is a DUPLICATE of Snowflake ALLOC_BUDGET_CASCADE — DO NOT use it, DELETE it
+- engine.py still has old Azure SQL fallback paths — the API (allocation_engine.py) bypasses these entirely
+- The CORRECT flow is: allocation_engine.py → snowflake_loader.py → option_filler.py → size_allocator.py
+- NEVER re-score articles locally — Snowflake has 246M pre-computed scores
+
+### ⬜ PENDING
+- Azure deployment verification (zip deploy accepted, needs restart and health check)
+- Test FW_M_SLIPPER, L_KURTI_HS, M_TEES_HS (same pipeline, different MAJCATs)
+- Run all 242 MAJCATs endpoint (POST /allocation-engine/run-all)
+- Daily cron: Snowflake rescore → Azure allocate → results back to Snowflake
+- Populate DC_ARTICLE_PRIORITY (HERO/FOCUS article lists from V2 planning team)
+- Populate STORE_SPECIFIC_LISTING (store-specific mandates)
+- Replace RNG_SEG MRP-quartile approximation with real SAP mapping from product_master (range_segment column, 3M rows on Supabase)
+
+### SUPABASE ARTICLE MASTER (discovered April 8)
+- product_master: 3M rows with range_segment (E/P/V/SP), division, vendor, article_status
+- variant_article_product_master: 1M rows with 87 columns including rng_seg, fabric, macro_mvgr
+- All variants of a generic article share attributes (rng_seg, div, fabric) — only color+size differ
+- M_JEANS has 22,508 variants with range segments E, P, SP, V
+
+### Universal MCP Server (context for any Claude session)
+- URL: https://universal-mcp.akash-bab.workers.dev
+- Key: ArsV2Mcp@22cab54c1bee24fa6893906c
+- Has 38 tools covering all V2 Retail systems + full allocation engine context
+- Any Claude with MCP access gets: credentials, architecture, Snowflake data inventory, L-ART waterfall, test results
+
 ## FULL HANDOVER DOCUMENT
 See: V2_RETAIL_HANDOVER.md in this repo (465 lines, complete data inventory, all credentials, 7 agent tasks)
 
