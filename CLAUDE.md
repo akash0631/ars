@@ -200,6 +200,25 @@ ZWM_USR02 (user-plant), ZWM_DC_MASTER (DC config), ZWM_CRATE (crate-bin), ZWM_DC
 4. HHT APK uploads to R2 v2retail bucket (not nubo, not eatnubo)
 5. SAP FM name != FG name — ALWAYS check TFDIR.PNAME
 
+
+
+## LOVABLE APPS (React + TypeScript + Supabase)
+All repos under akash0631, built on Lovable platform:
+
+| App | Repo | Purpose | Lovable URL |
+|-----|------|---------|-------------|
+| HubWise | hubwise-route-orchestrator | DC route planner (DCPlanner, Allocation, Maps) | lovable.dev/projects/d5f2c890 |
+| ReachAttest | reach-attest | HR/attendance mgmt (HRAdmin, Masters, bulk ops) | lovable.dev/projects/d8a4ed9b |
+| ApexKarma | apex-karma | Project/task mgmt (Projects, Teams, Reports) | lovable.dev/projects/247fd162 |
+| V2RetailOps | v2retailoperation | Store ops (Dashboard, Karma Checklist, Gondola) | — |
+| Nubo Pulse OS | nubo-os-your-store-s-brain | Restaurant brain (Bills, Inventory, AI, Feedback) | — |
+
+## N8N WORKFLOW AUTOMATION
+- **Instance:** n8n.happyocean-047968bd.centralindia.azurecontainerapps.io (Azure Container App)
+- **Proxy:** nubo-n8n-proxy CF Worker → Cloudflare Tunnel → n8n
+- **Used for:** Nubo automation (ads scheduling, social posting, operations alerts)
+- **Related workers:** nubo-ads-bot, nubo-ads-cron, nubo-ads-snapshot, nubo-ga-bot, nubo-ig-fetch, nubo-social
+
 ### Universal MCP Server
 - **URL:** https://universal-mcp.akash-bab.workers.dev
 - **Key:** ArsV2Mcp@22cab54c1bee24fa6893906c
